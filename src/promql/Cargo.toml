@@ -8,7 +8,7 @@ license.workspace = true
 async-recursion = "1.0"
 async-trait.workspace = true
 bytemuck = "1.12"
-common-function-macro = { path = "../function-macro" }
+function-macro = { path = "../function-macro" }
 datafusion.workspace = true
 futures = "0.3"
 promql-parser = "0.1.0"
