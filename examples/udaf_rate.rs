@@ -1,9 +1,7 @@
-use arrow::array::{ Int64Array, StringArray};
 use chrono::{Datelike, Duration, TimeZone, Timelike, Utc};
 use dashmap::DashMap;
-use datafusion::arrow::{
-    array::ArrayRef, datatypes::DataType, record_batch::RecordBatch,
-};
+use datafusion::arrow::array::{Int64Array, StringArray};
+use datafusion::arrow::{array::ArrayRef, datatypes::DataType, record_batch::RecordBatch};
 use datafusion::{error::Result, physical_plan::Accumulator};
 use datafusion::{logical_expr::Volatility, prelude::*, scalar::ScalarValue};
 use datafusion_expr::{

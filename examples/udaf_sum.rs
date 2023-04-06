@@ -1,4 +1,4 @@
-use arrow::array::StringArray;
+use datafusion::arrow::array::StringArray;
 use datafusion::arrow::{
     array::ArrayRef, array::Float32Array, datatypes::DataType, record_batch::RecordBatch,
 };

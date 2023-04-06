@@ -1,6 +1,6 @@
-use arrow::array::{Int64Array, StringArray};
 use chrono::{Datelike, Duration, TimeZone, Timelike, Utc};
 use dashmap::DashMap;
+use datafusion::arrow::array::{Int64Array, StringArray};
 use datafusion::arrow::json as arrowJson;
 use datafusion::arrow::{array::ArrayRef, datatypes::DataType, record_batch::RecordBatch};
 use datafusion::{error::Result, physical_plan::Accumulator};

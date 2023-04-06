@@ -106,9 +106,10 @@ async fn main() -> Result<()> {
         .iter()
         .position(|v| v.name() == "kubernetes_namespace_name");
 
+    let ctx_table = ctx.table_provider("tbl").await?;
     let table_scan_plan = LogicalPlanBuilder::scan_with_filters(
         "tbl",
-        Arc::new(DefaultTableSource::new(table)),
+        Arc::new(DefaultTableSource::new(ctx_table)),
         Some(vec![field_id.unwrap()]),
         vec![col("kubernetes_namespace_name").eq(lit("ziox-noderole"))],
     )
@@ -124,11 +125,9 @@ async fn main() -> Result<()> {
         vec![count(lit("*")).alias("num")],
     )
     .unwrap();
-    let projection_plan = LogicalPlanBuilder::project(
-        aggregate_plan,
-        vec![col("kubernetes_namespace_name")],
-    )
-    .unwrap();
+    let projection_plan =
+        LogicalPlanBuilder::project(aggregate_plan, vec![col("kubernetes_namespace_name")])
+            .unwrap();
     let limit_plan = LogicalPlanBuilder::limit(projection_plan, 0, Some(100)).unwrap();
     let logical_plan = limit_plan.build().unwrap();
     log::info!("customed plan:\n{:?}", logical_plan.clone());
@@ -142,7 +141,7 @@ async fn main() -> Result<()> {
         start.elapsed().as_secs_f64()
     );
     let result = datafusion::physical_plan::collect(execute_plan, ctx.task_ctx()).await?;
-    let pretty_print = arrow::util::pretty::pretty_format_batches(&result).unwrap();
+    let pretty_print = datafusion::arrow::util::pretty::pretty_format_batches(&result).unwrap();
     println!("{}", pretty_print);
 
     // print the results

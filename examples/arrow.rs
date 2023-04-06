@@ -1,6 +1,6 @@
-use arrow::array::{Float64Array, Int32Array};
-use arrow::datatypes::{DataType, Field, Schema};
-use arrow::record_batch::RecordBatch;
+use datafusion::arrow::array::{Float64Array, Int32Array};
+use datafusion::arrow::datatypes::{DataType, Field, Schema};
+use datafusion::arrow::record_batch::RecordBatch;
 use std::sync::Arc;
 
 fn main() {
@@ -30,7 +30,7 @@ fn main() {
     .unwrap();
 
     // Merge the two RecordBatches into a single RecordBatch
-    let merged_batch = arrow::compute::concat_batches(&schema.clone(), &[batch1, batch2]).unwrap();
+    let merged_batch = datafusion::arrow::compute::concat_batches(&schema.clone(), &[batch1, batch2]).unwrap();
 
     // Print the merged RecordBatch
     println!("{:?}", merged_batch);
