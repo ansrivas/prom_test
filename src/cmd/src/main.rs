@@ -43,7 +43,9 @@ static ORIGIN_VALUE: &str = r#"{"metric":{"__name__":"zo_http_incoming_requests"
 #[tokio::main]
 async fn main() {
     let query = r#"rate(some_metric{cluster="zo1"}[5m])"#;
+    let query = r#"topk(10, rate(some_metric{cluster="zo1"}[5m]))"#;
     let prom_expr = parser::parse(query).unwrap();
+    println!("{:?}", prom_expr);
     let eval_stmt = EvalStmt {
         expr: prom_expr,
         start: UNIX_EPOCH

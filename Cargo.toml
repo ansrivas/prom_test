@@ -8,12 +8,12 @@ members = ["src/promql", "src/function-macro", "src/cmd"]
 
 [workspace.dependencies]
 async-trait = "0.1"
-datafusion = { git = "https://github.com/apache/arrow-datafusion.git", rev = "8e125d2ecf242b4f4b81f06839900dbb2037cc2a" }
-datafusion-common = { git = "https://github.com/apache/arrow-datafusion.git", rev = "8e125d2ecf242b4f4b81f06839900dbb2037cc2a" }
-datafusion-expr = { git = "https://github.com/apache/arrow-datafusion.git", rev = "8e125d2ecf242b4f4b81f06839900dbb2037cc2a" }
-datafusion-optimizer = { git = "https://github.com/apache/arrow-datafusion.git", rev = "8e125d2ecf242b4f4b81f06839900dbb2037cc2a" }
-datafusion-physical-expr = { git = "https://github.com/apache/arrow-datafusion.git", rev = "8e125d2ecf242b4f4b81f06839900dbb2037cc2a" }
-datafusion-sql = { git = "https://github.com/apache/arrow-datafusion.git", rev = "8e125d2ecf242b4f4b81f06839900dbb2037cc2a" }
+datafusion = { version = "22" }
+datafusion-common = { version = "22" }
+datafusion-expr = { version = "22" }
+datafusion-optimizer = { version = "22" }
+datafusion-physical-expr = { version = "22" }
+datafusion-sql = { version = "22" }
 snafu = { version = "0.7", features = ["backtraces"] }
 tokio = { version = "1.24.2", features = ["full"] }
 tokio-util = "0.7"
