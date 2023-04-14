@@ -109,7 +109,7 @@ fn create_context() -> Result<SessionContext> {
 async fn main() {
     let start_time = time::Instant::now();
     // let query = r#"rate(zo_http_incoming_requests{cluster="zo1"}[5m])"#;
-    let query = r#"topk(1, rate(zo_http_incoming_requests{cluster="zo1"}[5m]))"#;
+    let query = r#"topk(1, irate(zo_http_incoming_requests{cluster="zo1"}[5m]))"#;
     let prom_expr = parser::parse(query).unwrap();
     println!("{:?}", prom_expr);
     println!("---------------");

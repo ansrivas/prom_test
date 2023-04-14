@@ -259,10 +259,10 @@ impl QueryEngine {
 
         match func.name {
             "increase" => Ok(StackValue::None),
-            "rate" => function::rate(&input),
+            "rate" => function::rate::rate(&input),
             "delta" => Ok(StackValue::None),
             "idelta" => Ok(StackValue::None),
-            "irate" => Ok(StackValue::None),
+            "irate" => function::irate::irate(&input),
             "resets" => Ok(StackValue::None),
             "changes" => Ok(StackValue::None),
             "avg_over_time" => Ok(StackValue::None),

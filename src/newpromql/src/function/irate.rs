@@ -2,9 +2,9 @@ use chrono::{Datelike, Duration, TimeZone, Timelike, Utc};
 use datafusion::arrow::json as arrowJson;
 use datafusion::error::{DataFusionError, Result};
 
-use super::{Point, StackValue, VectorValue, VectorValueResponse};
+use crate::{Point, StackValue, VectorValue, VectorValueResponse};
 
-pub fn rate(data: &StackValue) -> Result<StackValue> {
+pub fn irate(data: &StackValue) -> Result<StackValue> {
     let mut rate_value: Vec<VectorValueResponse> = Vec::new();
     let data = match data {
         StackValue::MatrixValue(v) => v,
@@ -21,7 +21,7 @@ pub fn rate(data: &StackValue) -> Result<StackValue> {
             values: Vec::new(),
         };
         for (t, values) in metric.values.iter() {
-            let value = rate_exec(values);
+            let value = irate_exec(values);
             match value {
                 Ok(v) => metric_data.values.push(Point {
                     timestamp: *t,
@@ -39,11 +39,14 @@ pub fn rate(data: &StackValue) -> Result<StackValue> {
     Ok(StackValue::MatrixValueResponse(rate_value))
 }
 
-fn rate_exec(data: &[Point]) -> Result<f64> {
-    let first_value = data.first().unwrap();
-    let end_value = data.last().unwrap();
-    let value = (end_value.value - first_value.value)
-        / ((end_value.timestamp - first_value.timestamp)
+fn irate_exec(data: &[Point]) -> Result<f64> {
+    let (end_value, data) = data.split_last().unwrap();
+    let previous_value = match data.last() {
+        Some(v) => v,
+        None => return Ok(0.0),
+    };
+    let value = (end_value.value - previous_value.value)
+        / ((end_value.timestamp - previous_value.timestamp)
             / Duration::seconds(1).num_microseconds().unwrap()) as f64;
     Ok(value)
 }
