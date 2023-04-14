@@ -6,7 +6,7 @@ license.workspace = true
 
 [dependencies]
 promql-parser = "0.1.0"
-promql = { path = "../promql" }
+newpromql = { path = "../newpromql" }
 
 arrow = { version = "36.0", features = ["simd", "ipc_compression"] }
 arrow-array = "36.0"
@@ -39,3 +39,4 @@ lazy_static = "1.4.0"
 env_logger = "0.10"
 log = "0.4.17"
 tokio.workspace = true
+async-recursion = "1.0"

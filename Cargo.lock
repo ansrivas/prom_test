@@ -1793,6 +1793,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "newpromql"
+version = "0.1.1"
+dependencies = [
+ "async-recursion",
+ "async-trait",
+ "bytemuck",
+ "chrono",
+ "datafusion",
+ "function-macro",
+ "futures",
+ "promql-parser",
+ "serde",
+ "serde_json",
+ "snafu",
+ "tokio",
+]
+
+[[package]]
 name = "num"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2170,6 +2188,7 @@ dependencies = [
  "arrow-array",
  "arrow-flight",
  "arrow-schema",
+ "async-recursion",
  "async-stream",
  "bytes",
  "chrono",
@@ -2180,10 +2199,10 @@ dependencies = [
  "futures-util",
  "lazy_static",
  "log",
+ "newpromql",
  "parking_lot",
  "parquet",
  "paste",
- "promql",
  "promql-parser",
  "prost",
  "rand",
