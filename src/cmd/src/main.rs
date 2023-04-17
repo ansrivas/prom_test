@@ -22,8 +22,16 @@ use std::time::{Duration, UNIX_EPOCH};
 #[tokio::main]
 async fn main() {
     let start_time = time::Instant::now();
-    // let query = r#"rate(zo_http_incoming_requests{cluster="zo1"}[5m])"#;
-    let query = r#"topk(1, irate(zo_http_incoming_requests{cluster="zo1"}[5m]))"#;
+    let mut query = r#"topk(1, irate(zo_response_time_count{cluster="zo1"}[5m]))"#;
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() > 1 {
+        if args[1] == "help" || args[1] == "-h" {
+            println!("Usage: <query>");
+            println!(r#"Usage: 'irate(zo_response_time_count{{cluster="zo1"}}[5m])'"#);
+            return;
+        }
+        query = &args[1];
+    }
     let prom_expr = parser::parse(query).unwrap();
     println!("{:?}", prom_expr);
     println!("---------------");
