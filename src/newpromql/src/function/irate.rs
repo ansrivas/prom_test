@@ -40,6 +40,9 @@ pub fn irate(data: &StackValue) -> Result<StackValue> {
 }
 
 fn irate_exec(data: &[Point]) -> Result<f64> {
+    if data.is_empty() {
+        return Ok(0.0);
+    }
     let (end_value, data) = data.split_last().unwrap();
     let previous_value = match data.last() {
         Some(v) => v,

@@ -4,7 +4,7 @@ edition = "2021"
 license = "Apache-2.0"
 
 [workspace]
-members = ["src/promql", "src/newpromql", "src/function-macro", "src/cmd"]
+members = ["src/newpromql", "src/function-macro", "src/cmd"]
 
 [workspace.dependencies]
 async-trait = "0.1"

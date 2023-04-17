@@ -40,6 +40,9 @@ pub fn rate(data: &StackValue) -> Result<StackValue> {
 }
 
 fn rate_exec(data: &[Point]) -> Result<f64> {
+    if data.is_empty() {
+        return Ok(0.0);
+    }
     let first_value = data.first().unwrap();
     let end_value = data.last().unwrap();
     let value = (end_value.value - first_value.value)

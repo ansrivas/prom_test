@@ -1,2 +1,2 @@
-pub mod rate;
 pub mod irate;
+pub mod rate;
