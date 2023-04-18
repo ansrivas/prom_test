@@ -1,4 +1,5 @@
 use arrow_array::{ArrayRef, Float64Array};
+use clap::Parser;
 use datafusion::datasource::MemTable;
 use datafusion::error::Result;
 use datafusion::prelude::SessionContext;
@@ -19,22 +20,23 @@ use std::io::prelude::*;
 use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
 
+#[derive(Debug, Parser)]
+struct Cli {
+    #[arg(help = r#"PromQL expression
+
+Examples:
+    irate(zo_response_time_count{cluster="zo1"}[5m])
+    topk(1, irate(zo_response_time_count{cluster="zo1"}[5m]))
+    histogram_quantile(0.9, rate(zo_response_time_bucket[5m]))"#)]
+    expr: String,
+}
+
 #[tokio::main]
 async fn main() {
+    let cli = Cli::parse();
     let start_time = time::Instant::now();
-    let mut query = r#"topk(1, irate(zo_response_time_count{cluster="zo1"}[5m]))"#;
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() > 1 {
-        if args[1] == "help" || args[1] == "-h" {
-            println!("Usage: <query>");
-            println!(r#"Usage: 'irate(zo_response_time_count{{cluster="zo1"}}[5m])'"#);
-            return;
-        }
-        query = &args[1];
-    }
-    let prom_expr = parser::parse(query).unwrap();
-    println!("{:?}", prom_expr);
-    println!("---------------");
+    let prom_expr = parser::parse(&cli.expr).unwrap();
+    dbg!(&prom_expr);
 
     let eval_stmt = EvalStmt {
         expr: prom_expr,
