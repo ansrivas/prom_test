@@ -8,7 +8,7 @@ use datafusion::error::{DataFusionError, Result};
 use datafusion::prelude::{col, lit, SessionContext};
 use promql_parser::parser::{
     token, AggModifier, AggregateExpr, BinaryExpr as PromBinaryExpr, Call, EvalStmt,
-    Expr as PromExpr, Function, FunctionArgs, MatrixSelector, NumberLiteral, Offset, ParenExpr,
+    Expr as PromExpr, Function, FunctionArgs, MatrixSelector, NumberLiteral, ParenExpr,
     StringLiteral, SubqueryExpr, TokenType, UnaryExpr, VectorSelector,
 };
 use serde::{Deserialize, Serialize};
@@ -211,7 +211,7 @@ impl QueryEngine {
     pub async fn aggregate_exprs(
         &self,
         op: &TokenType,
-        expr: &Box<PromExpr>,
+        expr: &PromExpr,
         param: &Option<Box<PromExpr>>,
         modifier: &Option<AggModifier>,
     ) -> Result<StackValue> {
@@ -226,28 +226,28 @@ impl QueryEngine {
                 ))
             }
         };
-        let input = self.prom_expr_to_plan(*expr.clone()).await?;
+        let input = self.prom_expr_to_plan(expr.clone()).await?;
 
-        match op.id() {
-            token::T_SUM => Ok(StackValue::None),
-            token::T_AVG => Ok(StackValue::None),
-            token::T_COUNT => Ok(StackValue::None),
-            token::T_MIN => Ok(StackValue::None),
-            token::T_MAX => Ok(StackValue::None),
-            token::T_GROUP => Ok(StackValue::None),
-            token::T_STDDEV => Ok(StackValue::None),
-            token::T_STDVAR => Ok(StackValue::None),
-            token::T_TOPK => aggregation::topk(param as usize, &input),
-            token::T_BOTTOMK => Ok(StackValue::None),
-            token::T_COUNT_VALUES => Ok(StackValue::None),
-            token::T_QUANTILE => Ok(StackValue::None),
+        Ok(match op.id() {
+            token::T_SUM => StackValue::None,
+            token::T_AVG => StackValue::None,
+            token::T_COUNT => StackValue::None,
+            token::T_MIN => StackValue::None,
+            token::T_MAX => StackValue::None,
+            token::T_GROUP => StackValue::None,
+            token::T_STDDEV => StackValue::None,
+            token::T_STDVAR => StackValue::None,
+            token::T_TOPK => aggregation::topk(param as usize, &input)?,
+            token::T_BOTTOMK => StackValue::None,
+            token::T_COUNT_VALUES => StackValue::None,
+            token::T_QUANTILE => StackValue::None,
             _ => {
                 return Err(DataFusionError::Internal(format!(
                     "Unsupported Aggregate: {:?}",
                     op
-                )))
+                )));
             }
-        }
+        })
     }
 
     pub async fn call_expres(&self, func: &Function, args: &FunctionArgs) -> Result<StackValue> {
@@ -257,32 +257,32 @@ impl QueryEngine {
             input = self.prom_expr_to_plan(*arg.clone()).await?;
         }
 
-        match func.name {
-            "increase" => Ok(StackValue::None),
-            "rate" => function::rate::rate(&input),
-            "delta" => Ok(StackValue::None),
-            "idelta" => Ok(StackValue::None),
-            "irate" => function::irate::irate(&input),
-            "resets" => Ok(StackValue::None),
-            "changes" => Ok(StackValue::None),
-            "avg_over_time" => Ok(StackValue::None),
-            "min_over_time" => Ok(StackValue::None),
-            "max_over_time" => Ok(StackValue::None),
-            "sum_over_time" => Ok(StackValue::None),
-            "count_over_time" => Ok(StackValue::None),
-            "last_over_time" => Ok(StackValue::None),
-            "absent_over_time" => Ok(StackValue::None),
-            "present_over_time" => Ok(StackValue::None),
-            "stddev_over_time" => Ok(StackValue::None),
-            "stdvar_over_time" => Ok(StackValue::None),
-            "quantile_over_time" => Ok(StackValue::None),
+        Ok(match func.name {
+            "increase" => StackValue::None,
+            "rate" => function::rate::rate(&input)?,
+            "delta" => StackValue::None,
+            "idelta" => StackValue::None,
+            "irate" => function::irate::irate(&input)?,
+            "resets" => StackValue::None,
+            "changes" => StackValue::None,
+            "avg_over_time" => StackValue::None,
+            "min_over_time" => StackValue::None,
+            "max_over_time" => StackValue::None,
+            "sum_over_time" => StackValue::None,
+            "count_over_time" => StackValue::None,
+            "last_over_time" => StackValue::None,
+            "absent_over_time" => StackValue::None,
+            "present_over_time" => StackValue::None,
+            "stddev_over_time" => StackValue::None,
+            "stdvar_over_time" => StackValue::None,
+            "quantile_over_time" => StackValue::None,
             _ => {
                 return Err(DataFusionError::Internal(format!(
                     "Unsupported function: {}",
                     func.name
-                )))
+                )));
             }
-        }
+        })
     }
 }
 

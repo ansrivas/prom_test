@@ -14,10 +14,10 @@ pub fn topk(n: usize, data: &StackValue) -> Result<StackValue> {
     };
 
     let mut score_value = Vec::new();
-    for i in 0..data.len() {
+    for (i, item) in data.iter().enumerate() {
         score_value.push(Item {
             index: i,
-            value: topk_exec(&data[i].values).unwrap(),
+            value: topk_exec(&item.values).unwrap(),
         });
     }
     score_value.sort_by(|a, b| b.value.partial_cmp(&a.value).unwrap());
