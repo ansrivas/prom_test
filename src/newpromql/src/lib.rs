@@ -7,9 +7,8 @@ use datafusion::arrow::json as arrowJson;
 use datafusion::error::{DataFusionError, Result};
 use datafusion::prelude::{col, lit, SessionContext};
 use promql_parser::parser::{
-    token, AggModifier, AggregateExpr, BinaryExpr as PromBinaryExpr, Call, EvalStmt,
-    Expr as PromExpr, Function, FunctionArgs, MatrixSelector, NumberLiteral, ParenExpr,
-    StringLiteral, SubqueryExpr, TokenType, UnaryExpr, VectorSelector,
+    token, AggModifier, AggregateExpr, Call, EvalStmt, Expr as PromExpr, Function, FunctionArgs,
+    MatrixSelector, NumberLiteral, ParenExpr, TokenType, UnaryExpr, VectorSelector,
 };
 use serde::{Deserialize, Serialize};
 
@@ -45,68 +44,36 @@ impl QueryEngine {
 
     #[async_recursion]
     pub async fn prom_expr_to_plan(&self, prom_expr: PromExpr) -> Result<StackValue> {
-        match &prom_expr {
+        dbg!(&prom_expr);
+        Ok(match &prom_expr {
             PromExpr::Aggregate(AggregateExpr {
                 op,
                 expr,
                 param,
                 modifier,
-            }) => self.aggregate_exprs(op, expr, param, modifier).await,
+            }) => self.aggregate_exprs(op, expr, param, modifier).await?,
             PromExpr::Unary(UnaryExpr { expr }) => {
-                println!("PromExpr::Unary: {expr:?}");
                 let _input = self.prom_expr_to_plan(*expr.clone()).await?;
-                Ok(StackValue::None)
+                StackValue::None
             }
-            PromExpr::Binary(PromBinaryExpr {
-                lhs,
-                rhs,
-                op,
-                modifier,
-            }) => {
-                println!("PromExpr::Binary: {lhs:?} {rhs:?} {op:?} {modifier:?}");
-                Ok(StackValue::None)
-            }
+            PromExpr::Binary(_) => StackValue::None,
             PromExpr::Paren(ParenExpr { expr }) => {
-                println!("PromExpr::Paren: {expr:?}");
                 let _input = self.prom_expr_to_plan(*expr.clone()).await?;
-                Ok(StackValue::None)
+                StackValue::None
             }
-            PromExpr::Subquery(SubqueryExpr {
-                expr,
-                offset,
-                at,
-                range,
-                step,
-            }) => {
-                println!("PromExpr::Subquery: {expr:?} {offset:?} {at:?} {range:?} {step:?}");
-                Ok(StackValue::None)
-            }
-            PromExpr::NumberLiteral(NumberLiteral { val }) => {
-                println!("PromExpr::NumberLiteral: {val:?}");
-                Ok(StackValue::NumberLiteral(*val))
-            }
-            PromExpr::StringLiteral(StringLiteral { .. }) => {
-                println!("PromExpr::StringLiteral: NOT SUPPORTED");
-                Ok(StackValue::None)
-            }
-            PromExpr::VectorSelector(VectorSelector {
-                name,
-                offset,
-                matchers,
-                at,
-            }) => {
-                println!("PromExpr::VectorSelector: {name:?} {offset:?} {matchers:?} {at:?}");
-                Ok(StackValue::None)
-            }
+            PromExpr::Subquery(_) => StackValue::None,
+            PromExpr::NumberLiteral(NumberLiteral { val }) => StackValue::NumberLiteral(*val),
+            PromExpr::StringLiteral(_) => StackValue::None,
+            PromExpr::VectorSelector(_) => StackValue::None,
             PromExpr::MatrixSelector(MatrixSelector {
                 vector_selector,
                 range,
             }) => {
                 let data = self.matrix_selector(vector_selector, range).await?;
-                Ok(StackValue::MatrixValue(data))
+                StackValue::MatrixValue(data)
             }
-            PromExpr::Call(Call { func, args }) => self.call_expres(func, args).await,
-        }
+            PromExpr::Call(Call { func, args }) => self.call_expres(func, args).await?,
+        })
     }
 
     /// MatrixSelector is a special case of VectorSelector that returns a matrix of samples.
@@ -115,8 +82,6 @@ impl QueryEngine {
         selector: &VectorSelector,
         range: &Duration,
     ) -> Result<Vec<VectorValue>> {
-        // println!("PromExpr::MatrixSelector: {selector:?} {range:?}");
-
         // first: calcuate metrics group
         let table_name = selector.name.clone().unwrap();
         let table = self.ctx.table(&table_name).await?;

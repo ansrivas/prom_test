@@ -51,12 +51,12 @@ async fn main() {
     };
 
     let ctx = create_context().unwrap();
-    println!("prepare time: {}", start_time.elapsed());
+    eprintln!("prepare time: {}", start_time.elapsed());
 
     let mut engine = newpromql::QueryEngine::new(ctx);
     let data = engine.exec(eval_stmt).await.unwrap();
-    println!("{:?}", data);
-    println!("execute time: {}", start_time.elapsed());
+    eprintln!("{data:?}");
+    eprintln!("execute time: {}", start_time.elapsed());
 }
 
 // create local session context with an in-memory table
