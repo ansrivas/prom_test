@@ -43,7 +43,7 @@ impl QueryEngine {
     }
 
     #[async_recursion]
-    pub async fn prom_expr_to_plan(&self, prom_expr: PromExpr) -> Result<StackValue> {
+    async fn prom_expr_to_plan(&self, prom_expr: PromExpr) -> Result<StackValue> {
         dbg!(&prom_expr);
         Ok(match &prom_expr {
             PromExpr::Aggregate(AggregateExpr {
@@ -77,7 +77,7 @@ impl QueryEngine {
     }
 
     /// MatrixSelector is a special case of VectorSelector that returns a matrix of samples.
-    pub async fn matrix_selector(
+    async fn matrix_selector(
         &self,
         selector: &VectorSelector,
         range: &Duration,
@@ -143,22 +143,13 @@ impl QueryEngine {
             let mut group_points = HashMap::new();
             let mut pos = start;
             while pos < end {
-                // println!("-----------------");
-                // println!("group: {:?}", group);
-
                 // fill the gap of data of the group
                 let start = (pos.duration_since(UNIX_EPOCH).unwrap() - *range).as_micros() as i64;
                 let end = (pos.duration_since(UNIX_EPOCH).unwrap()).as_micros() as i64;
                 let step_data: Vec<Point> = group_data
                     .clone()
                     .iter()
-                    .filter_map(|v| {
-                        if v.timestamp > start && v.timestamp <= end {
-                            Some(v.clone())
-                        } else {
-                            None
-                        }
-                    })
+                    .filter_map(|v| (v.timestamp > start && v.timestamp <= end).then(|| v.clone()))
                     .collect();
                 group_points.insert(end, step_data);
                 pos += interval;
@@ -173,14 +164,13 @@ impl QueryEngine {
         Ok(values)
     }
 
-    pub async fn aggregate_exprs(
+    async fn aggregate_exprs(
         &self,
         op: &TokenType,
         expr: &PromExpr,
         param: &Option<Box<PromExpr>>,
-        modifier: &Option<AggModifier>,
+        _modifier: &Option<AggModifier>,
     ) -> Result<StackValue> {
-        println!("PromExpr::Aggregate: {op:?} {param:?} {modifier:?}");
         let param = param.clone().unwrap().clone();
         let param = self.prom_expr_to_plan(*param.clone()).await?;
         let param = match param {
@@ -215,7 +205,7 @@ impl QueryEngine {
         })
     }
 
-    pub async fn call_expres(&self, func: &Function, args: &FunctionArgs) -> Result<StackValue> {
+    async fn call_expres(&self, func: &Function, args: &FunctionArgs) -> Result<StackValue> {
         let mut input = StackValue::None;
         for arg in &args.args {
             input = self.prom_expr_to_plan(*arg.clone()).await?;

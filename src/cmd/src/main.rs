@@ -36,7 +36,6 @@ async fn main() {
     let cli = Cli::parse();
     let start_time = time::Instant::now();
     let prom_expr = parser::parse(&cli.expr).unwrap();
-    dbg!(&prom_expr);
 
     let eval_stmt = EvalStmt {
         expr: prom_expr,
@@ -55,7 +54,7 @@ async fn main() {
 
     let mut engine = newpromql::QueryEngine::new(ctx);
     let data = engine.exec(eval_stmt).await.unwrap();
-    eprintln!("{data:?}");
+    dbg!(data);
     eprintln!("execute time: {}", start_time.elapsed());
 }
 
