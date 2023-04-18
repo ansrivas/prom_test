@@ -94,7 +94,7 @@ impl QueryEngine {
             }
         });
         let df_group = table.clone().aggregate(group_by.to_vec(), vec![])?;
-        df_group.clone().show().await?;
+        //XXX df_group.clone().show().await?;
         let group_data = df_group.collect().await?;
         let json_rows = arrowJson::writer::record_batches_to_json_rows(&group_data[..]).unwrap();
         let mut groups: Vec<HashMap<String, String>> = Vec::new();
@@ -216,9 +216,8 @@ impl QueryEngine {
     }
 
     pub async fn call_expres(&self, func: &Function, args: &FunctionArgs) -> Result<StackValue> {
-        // println!("PromExpr::Call: {func:?} {args:?}");
-        let mut input: StackValue = StackValue::None;
-        for arg in args.args.iter() {
+        let mut input = StackValue::None;
+        for arg in &args.args {
             input = self.prom_expr_to_plan(*arg.clone()).await?;
         }
 
