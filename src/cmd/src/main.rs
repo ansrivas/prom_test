@@ -33,9 +33,12 @@ Examples:
 
 #[tokio::main]
 async fn main() {
+    tracing_subscriber::fmt::init();
     let cli = Cli::parse();
     let start_time = time::Instant::now();
+
     let prom_expr = parser::parse(&cli.expr).unwrap();
+    //XXX dbg!(&prom_expr);
 
     let eval_stmt = EvalStmt {
         expr: prom_expr,
@@ -50,12 +53,12 @@ async fn main() {
     };
 
     let ctx = create_context().unwrap();
-    eprintln!("prepare time: {}", start_time.elapsed());
+    tracing::info!("prepare time: {}", start_time.elapsed());
 
     let mut engine = newpromql::QueryEngine::new(ctx);
     let data = engine.exec(eval_stmt).await.unwrap();
     dbg!(data);
-    eprintln!("execute time: {}", start_time.elapsed());
+    tracing::info!("execute time: {}", start_time.elapsed());
 }
 
 // create local session context with an in-memory table

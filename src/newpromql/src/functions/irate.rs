@@ -4,7 +4,7 @@ use datafusion::error::{DataFusionError, Result};
 
 use crate::{Point, StackValue, VectorValueResponse};
 
-pub fn irate(data: &StackValue) -> Result<StackValue> {
+pub(crate) fn irate(data: &StackValue) -> Result<StackValue> {
     let mut rate_value: Vec<VectorValueResponse> = Vec::new();
     let data = match data {
         StackValue::MatrixValue(v) => v,

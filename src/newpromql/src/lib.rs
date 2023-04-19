@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::str::FromStr as _;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_recursion::async_recursion;
@@ -12,8 +13,8 @@ use promql_parser::parser::{
 };
 use serde::{Deserialize, Serialize};
 
-pub mod aggregation;
-pub mod function;
+mod aggregation;
+mod functions;
 
 pub struct QueryEngine {
     ctx: SessionContext,
@@ -44,7 +45,6 @@ impl QueryEngine {
 
     #[async_recursion]
     async fn prom_expr_to_plan(&self, prom_expr: PromExpr) -> Result<StackValue> {
-        dbg!(&prom_expr);
         Ok(match &prom_expr {
             PromExpr::Aggregate(AggregateExpr {
                 op,
@@ -206,36 +206,64 @@ impl QueryEngine {
     }
 
     async fn call_expres(&self, func: &Function, args: &FunctionArgs) -> Result<StackValue> {
-        let mut input = StackValue::None;
-        for arg in &args.args {
-            input = self.prom_expr_to_plan(*arg.clone()).await?;
-        }
+        use functions::Func;
 
-        Ok(match func.name {
-            "increase" => StackValue::None,
-            "rate" => function::rate::rate(&input)?,
-            "delta" => StackValue::None,
-            "idelta" => StackValue::None,
-            "irate" => function::irate::irate(&input)?,
-            "resets" => StackValue::None,
-            "changes" => StackValue::None,
-            "avg_over_time" => StackValue::None,
-            "min_over_time" => StackValue::None,
-            "max_over_time" => StackValue::None,
-            "sum_over_time" => StackValue::None,
-            "count_over_time" => StackValue::None,
-            "last_over_time" => StackValue::None,
-            "absent_over_time" => StackValue::None,
-            "present_over_time" => StackValue::None,
-            "stddev_over_time" => StackValue::None,
-            "stdvar_over_time" => StackValue::None,
-            "quantile_over_time" => StackValue::None,
-            _ => {
-                return Err(DataFusionError::Internal(format!(
-                    "Unsupported function: {}",
-                    func.name
-                )));
-            }
+        let func_name = Func::from_str(func.name).map_err(|_| {
+            DataFusionError::Internal(format!("Unsupported function: {}", func.name))
+        })?;
+
+        let last_arg = args
+            .last()
+            .expect("BUG: promql-parser should have validated function arguments");
+        let input = self.prom_expr_to_plan(*last_arg).await?;
+
+        Ok(match func_name {
+            Func::Abs => todo!(),
+            Func::Absent => todo!(),
+            Func::AbsentOverTime => todo!(),
+            Func::Ceil => todo!(),
+            Func::Changes => todo!(),
+            Func::Clamp => todo!(),
+            Func::ClampMax => todo!(),
+            Func::ClampMin => todo!(),
+            Func::CountOverTime => todo!(),
+            Func::DayOfMonth => todo!(),
+            Func::DayOfWeek => todo!(),
+            Func::DayOfYear => todo!(),
+            Func::DaysInMonth => todo!(),
+            Func::Delta => todo!(),
+            Func::Deriv => todo!(),
+            Func::Exp => todo!(),
+            Func::Floor => todo!(),
+            Func::HistogramCount => todo!(),
+            Func::HistogramFraction => todo!(),
+            Func::HistogramQuantile => todo!(),
+            Func::HistogramSum => todo!(),
+            Func::HoltWinters => todo!(),
+            Func::Hour => todo!(),
+            Func::Idelta => todo!(),
+            Func::Increase => todo!(),
+            Func::Irate => functions::irate(&input)?,
+            Func::LabelJoin => todo!(),
+            Func::LabelReplace => todo!(),
+            Func::Ln => todo!(),
+            Func::Log2 => todo!(),
+            Func::Log10 => todo!(),
+            Func::Minute => todo!(),
+            Func::Month => todo!(),
+            Func::PredictLinear => todo!(),
+            Func::QuantileOverTime => todo!(),
+            Func::Rate => functions::rate(&input)?,
+            Func::Resets => todo!(),
+            Func::Round => todo!(),
+            Func::Scalar => todo!(),
+            Func::Sgn => todo!(),
+            Func::Sort => todo!(),
+            Func::SortDesc => todo!(),
+            Func::Time => todo!(),
+            Func::Timestamp => todo!(),
+            Func::Vector => todo!(),
+            Func::Year => todo!(),
         })
     }
 }
