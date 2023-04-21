@@ -1,8 +1,8 @@
 use datafusion::error::{DataFusionError, Result};
 
-use super::{Point, StackValue, VectorValueResponse};
+use crate::value::{Point, StackValue, VectorValueResponse};
 
-pub fn topk(n: usize, data: &StackValue) -> Result<StackValue> {
+pub(crate) fn topk(n: usize, data: &StackValue) -> Result<StackValue> {
     let mut topk_value: Vec<VectorValueResponse> = Vec::new();
     let data = match data {
         StackValue::MatrixValueResponse(v) => v,

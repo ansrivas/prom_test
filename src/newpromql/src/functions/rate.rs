@@ -2,7 +2,7 @@ use chrono::Duration;
 
 use datafusion::error::{DataFusionError, Result};
 
-use crate::{Point, StackValue, VectorValueResponse};
+use crate::value::{Point, StackValue, VectorValueResponse};
 
 pub(crate) fn rate(data: &StackValue) -> Result<StackValue> {
     let mut rate_value: Vec<VectorValueResponse> = Vec::new();

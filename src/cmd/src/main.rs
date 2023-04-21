@@ -1,17 +1,16 @@
 use arrow_array::{ArrayRef, Float64Array};
 use clap::Parser;
-use datafusion::datasource::MemTable;
-use datafusion::error::Result;
-use datafusion::prelude::SessionContext;
 use datafusion::{
     arrow::{
         array::{Int64Array, StringArray},
         datatypes::{DataType, Field, Schema},
         record_batch::RecordBatch,
     },
-    error::DataFusionError,
+    datasource::MemTable,
+    error::{DataFusionError, Result},
+    prelude::SessionContext,
 };
-use promql_parser::parser::{self, EvalStmt};
+use promql_parser::parser;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::HashMap;
@@ -40,7 +39,7 @@ async fn main() {
     let prom_expr = parser::parse(&cli.expr).unwrap();
     //XXX dbg!(&prom_expr);
 
-    let eval_stmt = EvalStmt {
+    let eval_stmt = parser::EvalStmt {
         expr: prom_expr,
         start: UNIX_EPOCH
             .checked_add(Duration::from_secs(1681711100))
