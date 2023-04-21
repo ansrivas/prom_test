@@ -216,12 +216,13 @@ impl QueryEngine {
     async fn call_expr(&self, func: &Function, args: &FunctionArgs) -> Result<StackValue> {
         use crate::functions::Func;
 
-        dbg!(func.name);
         let func_name = Func::from_str(func.name).map_err(|_| {
             DataFusionError::Internal(format!("Unsupported function: {}", func.name))
         })?;
 
+        /* XXX
         {
+            dbg!(func.name);
             std::fs::write(
                 format!("/tmp/XXX.{}.func.rs", func.name),
                 format!("{func:#?}\n"),
@@ -233,10 +234,27 @@ impl QueryEngine {
             )
             .unwrap();
         }
+        // XXX */
+
         let last_arg = args
             .last()
             .expect("BUG: promql-parser should have validated function arguments");
-        let input = self.prom_expr_to_plan(*last_arg).await?;
+        let input = if func_name != Func::HistogramQuantile {
+            self.prom_expr_to_plan(*last_arg).await?
+        } else {
+            // XXX-HACK
+            use std::{fs::File, path::Path};
+
+            let path = Path::new("/tmp/XXX.input.json");
+            if let Ok(f) = File::open(path) {
+                serde_json::from_reader(f).unwrap()
+            } else {
+                let input = self.prom_expr_to_plan(*last_arg).await?; // expensive operation
+                let f = File::create(path).unwrap();
+                serde_json::to_writer(f, &input).unwrap();
+                input
+            }
+        };
 
         Ok(match func_name {
             Func::Abs => todo!(),
