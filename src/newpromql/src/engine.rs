@@ -59,17 +59,17 @@ impl QueryEngine {
             }) => self.aggregate_exprs(op, expr, param, modifier).await?,
             PromExpr::Unary(UnaryExpr { expr }) => {
                 let _input = self.prom_expr_to_plan(*expr.clone()).await?;
-                StackValue::None
+                todo!()
             }
-            PromExpr::Binary(_) => StackValue::None,
+            PromExpr::Binary(_) => todo!(),
             PromExpr::Paren(ParenExpr { expr }) => {
                 let _input = self.prom_expr_to_plan(*expr.clone()).await?;
-                StackValue::None
+                todo!()
             }
-            PromExpr::Subquery(_) => StackValue::None,
+            PromExpr::Subquery(_) => todo!(),
             PromExpr::NumberLiteral(NumberLiteral { val }) => StackValue::NumberLiteral(*val),
-            PromExpr::StringLiteral(_) => StackValue::None,
-            PromExpr::VectorSelector(_) => StackValue::None,
+            PromExpr::StringLiteral(_) => todo!(),
+            PromExpr::VectorSelector(_) => todo!(),
             PromExpr::MatrixSelector(MatrixSelector {
                 vector_selector,
                 range,
@@ -87,7 +87,9 @@ impl QueryEngine {
         selector: &VectorSelector,
         range: &Duration,
     ) -> Result<Vec<VectorValue>> {
-        // first: calculate metrics group
+        use crate::labels::{Label, Signature};
+
+        // 1. Group by sets of labels (a.k.a. signatures)
         let table_name = selector.name.as_ref().unwrap();
         let table = self.ctx.table(table_name).await?;
         let group_by = table
@@ -99,40 +101,23 @@ impl QueryEngine {
                 (field_name != "value" && field_name != "_timestamp").then(|| col(field_name))
             })
             .collect::<Vec<_>>();
-
         let df_group = table.clone().aggregate(group_by, vec![])?;
         let group_data = df_group.collect().await?;
-        /* XXX-DELETEME
-        {
-            //XXX df_group.clone().show().await?;
-            use datafusion::arrow::util::pretty;
+        let signatures = arrowJson::writer::record_batches_to_json_rows(&group_data)?
+            .iter()
+            .map(|row| {
+                row.iter()
+                    .map(|(k, v)| Label {
+                        name: k.to_owned(),
+                        value: v.as_str().unwrap().to_owned(),
+                    })
+                    .collect::<Signature>()
+            })
+            .collect::<Vec<_>>();
 
-            //XXX pretty::print_batches(&group_data[..2]).unwrap();
-
-            let df = table.clone().limit(0, Some(10))?.collect().await?;
-            std::fs::write(
-                "/tmp/XXX.df.txt",
-                format!("{}", pretty::pretty_format_batches(&df).unwrap()),
-            )
-            .unwrap();
-            panic!("XXX");
-        }
-        // XXX */
-
-        let json_rows = arrowJson::writer::record_batches_to_json_rows(&group_data[..]).unwrap();
-        let mut groups: Vec<HashMap<String, String>> = Vec::new();
-        for row in json_rows {
-            let mut group = HashMap::new();
-            for (key, value) in row.iter() {
-                group.insert(key.to_string(), value.as_str().unwrap().to_string());
-            }
-            groups.push(group);
-        }
-        dbg!(("XXX", groups.len())); // XXX-DELETEME
-
-        // second: fill each group data
-        let mut values = Vec::new();
-        for group in groups {
+        // 2. Fill each group data
+        let mut values = vec![];
+        for signature in signatures {
             // fetch all data for the group
             let mut df_data = table.clone().filter(
                 col("_timestamp")
@@ -146,16 +131,15 @@ impl QueryEngine {
             for mat in selector.matchers.matchers.iter() {
                 df_data = df_data.filter(col(mat.name.clone()).eq(lit(mat.value.clone())))?;
             }
-            for (key, value) in group.iter() {
-                df_data = df_data.filter(col(key.clone()).eq(lit(value.clone())))?;
+            for label in signature.iter().cloned() {
+                df_data = df_data.filter(col(label.name).eq(lit(label.value)))?;
             }
             df_data = df_data.select(vec![col("_timestamp"), col("value")])?;
             let df_data = df_data.collect().await?;
 
-            let json_rows = arrowJson::writer::record_batches_to_json_rows(&df_data[..]).unwrap();
             let group_data = Rc::new(
-                json_rows
-                    .into_iter()
+                arrowJson::writer::record_batches_to_json_rows(&df_data)?
+                    .iter()
                     .map(|row| Point {
                         timestamp: row.get("_timestamp").unwrap().as_i64().unwrap(),
                         value: row.get("value").unwrap().as_f64().unwrap(),
@@ -181,7 +165,7 @@ impl QueryEngine {
             }
 
             values.push(VectorValue {
-                metric: group,
+                metric: signature,
                 values: group_points,
             })
         }
