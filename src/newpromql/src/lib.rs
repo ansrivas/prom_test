@@ -72,7 +72,7 @@ impl QueryEngine {
                 let data = self.matrix_selector(vector_selector, range).await?;
                 StackValue::MatrixValue(data)
             }
-            PromExpr::Call(Call { func, args }) => self.call_expres(func, args).await?,
+            PromExpr::Call(Call { func, args }) => self.call_expr(func, args).await?,
         })
     }
 
@@ -82,23 +82,27 @@ impl QueryEngine {
         selector: &VectorSelector,
         range: &Duration,
     ) -> Result<Vec<VectorValue>> {
-        // first: calcuate metrics group
-        let table_name = selector.name.clone().unwrap();
-        let table = self.ctx.table(&table_name).await?;
-        let schema = table.schema();
-        let fields = schema.fields();
-        let mut group_by = Vec::new();
-        fields.iter().for_each(|field| {
-            if field.name() != "value" && field.name() != "_timestamp" {
-                group_by.push(col(field.name()));
-            }
-        });
-        let df_group = table.clone().aggregate(group_by.to_vec(), vec![])?;
+        // first: calculate metrics group
+        let table_name = selector.name.as_ref().unwrap();
+        let table = self.ctx.table(table_name).await?;
+        let group_by = table
+            .schema()
+            .fields()
+            .iter()
+            .filter_map(|field| {
+                let field_name = field.name();
+                (field_name != "value" && field_name != "_timestamp").then(|| col(field_name))
+            })
+            .collect::<Vec<_>>();
+
+        let df_group = table.clone().aggregate(group_by, vec![])?;
         //XXX df_group.clone().show().await?;
         let group_data = df_group.collect().await?;
+        //XXX datafusion::arrow::util::pretty::print_batches(&group_data[..2]).unwrap(); // XXX-DELETEME
+
         let json_rows = arrowJson::writer::record_batches_to_json_rows(&group_data[..]).unwrap();
         let mut groups: Vec<HashMap<String, String>> = Vec::new();
-        for row in json_rows.iter() {
+        for row in json_rows {
             let mut group = HashMap::new();
             for (key, value) in row.iter() {
                 group.insert(key.to_string(), value.as_str().unwrap().to_string());
@@ -127,32 +131,33 @@ impl QueryEngine {
             }
             df_data = df_data.select(vec![col("_timestamp"), col("value")])?;
             let df_data = df_data.collect().await?;
+
             let json_rows = arrowJson::writer::record_batches_to_json_rows(&df_data[..]).unwrap();
-            let mut group_data: Vec<Point> = Vec::new();
-            json_rows.iter().for_each(|row| {
-                let timestamp = row.get("_timestamp").unwrap().as_i64().unwrap();
-                let value = row.get("value").unwrap().as_f64().unwrap();
-                group_data.push(Point { timestamp, value });
-            });
-            let group_data = Rc::new(group_data);
+            let group_data = Rc::new(
+                json_rows
+                    .into_iter()
+                    .map(|row| Point {
+                        timestamp: row.get("_timestamp").unwrap().as_i64().unwrap(),
+                        value: row.get("value").unwrap().as_f64().unwrap(),
+                    })
+                    .collect::<Vec<_>>(),
+            );
 
             // fill group
-            let start = self.start;
-            let end = self.end;
-            let interval = self.interval;
             let mut group_points = HashMap::new();
-            let mut pos = start;
-            while pos < end {
+            let mut pos = self.start;
+            while pos < self.end {
                 // fill the gap of data of the group
                 let start = (pos.duration_since(UNIX_EPOCH).unwrap() - *range).as_micros() as i64;
                 let end = (pos.duration_since(UNIX_EPOCH).unwrap()).as_micros() as i64;
-                let step_data: Vec<Point> = group_data
+                let step_data = group_data
                     .clone()
                     .iter()
-                    .filter_map(|v| (v.timestamp > start && v.timestamp <= end).then(|| v.clone()))
+                    .filter(|v| v.timestamp > start && v.timestamp <= end)
+                    .cloned()
                     .collect();
                 group_points.insert(end, step_data);
-                pos += interval;
+                pos += self.interval;
             }
 
             values.push(VectorValue {
@@ -160,7 +165,6 @@ impl QueryEngine {
                 values: group_points,
             })
         }
-
         Ok(values)
     }
 
@@ -205,7 +209,7 @@ impl QueryEngine {
         })
     }
 
-    async fn call_expres(&self, func: &Function, args: &FunctionArgs) -> Result<StackValue> {
+    async fn call_expr(&self, func: &Function, args: &FunctionArgs) -> Result<StackValue> {
         use functions::Func;
 
         let func_name = Func::from_str(func.name).map_err(|_| {
