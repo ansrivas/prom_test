@@ -1,11 +1,8 @@
-use chrono::Duration;
-
 use datafusion::error::{DataFusionError, Result};
 
 use crate::value::{Point, StackValue, VectorValueResponse};
 
 pub(crate) fn rate(data: &StackValue) -> Result<StackValue> {
-    let mut rate_value: Vec<VectorValueResponse> = Vec::new();
     let data = match data {
         StackValue::MatrixValue(v) => v,
         _ => {
@@ -15,38 +12,33 @@ pub(crate) fn rate(data: &StackValue) -> Result<StackValue> {
         }
     };
 
-    for metric in data {
-        let mut metric_data = VectorValueResponse {
-            metric: metric.metric.clone(),
-            values: Vec::new(),
-        };
-        for (t, values) in metric.values.iter() {
-            let value = rate_exec(values);
-            match value {
-                Ok(v) => metric_data.values.push(Point {
+    let rate_values = data
+        .iter()
+        .map(|metric| {
+            let mut values = metric
+                .values
+                .iter()
+                .map(|(t, vals)| Point {
                     timestamp: *t,
-                    value: v,
-                }),
-                Err(e) => return Err(e),
+                    value: rate_exec(vals),
+                })
+                .collect::<Vec<_>>();
+            values.sort_by_key(|x: &Point| x.timestamp);
+            VectorValueResponse {
+                metric: metric.metric.clone(),
+                values,
             }
-        }
-        metric_data
-            .values
-            .sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
-        rate_value.push(metric_data);
-    }
-
-    Ok(StackValue::MatrixValueResponse(rate_value))
+        })
+        .collect();
+    Ok(StackValue::MatrixValueResponse(rate_values))
 }
 
-fn rate_exec(data: &[Point]) -> Result<f64> {
+fn rate_exec(data: &[Point]) -> f64 {
     if data.is_empty() {
-        return Ok(0.0);
+        return 0.;
     }
-    let first_value = data.first().unwrap();
-    let end_value = data.last().unwrap();
-    let value = (end_value.value - first_value.value)
-        / ((end_value.timestamp - first_value.timestamp)
-            / Duration::seconds(1).num_microseconds().unwrap()) as f64;
-    Ok(value)
+    let first = data.first().unwrap();
+    let last = data.last().unwrap();
+    let dt_seconds = (last.timestamp - first.timestamp) / 1_000_000;
+    (last.value - first.value) / dt_seconds as f64
 }
