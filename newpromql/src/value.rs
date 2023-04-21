@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::labels;
+type Metric = HashMap<String, String>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Point {
@@ -22,12 +22,12 @@ pub enum StackValue {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VectorValue {
-    pub metric: labels::Signature,
+    pub metric: Metric,
     pub values: HashMap<i64, Vec<Point>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VectorValueResponse {
-    pub metric: labels::Signature,
+    pub metric: Metric,
     pub values: Vec<Point>,
 }

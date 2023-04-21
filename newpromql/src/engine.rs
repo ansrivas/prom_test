@@ -87,8 +87,6 @@ impl QueryEngine {
         selector: &VectorSelector,
         range: &Duration,
     ) -> Result<Vec<VectorValue>> {
-        use crate::labels::{Label, Signature};
-
         // 1. Group by sets of labels (a.k.a. signatures)
         let table_name = selector.name.as_ref().unwrap();
         let table = self.ctx.table(table_name).await?;
@@ -103,21 +101,18 @@ impl QueryEngine {
             .collect::<Vec<_>>();
         let df_group = table.clone().aggregate(group_by, vec![])?;
         let group_data = df_group.collect().await?;
-        let signatures = arrowJson::writer::record_batches_to_json_rows(&group_data)?
+        let metrics = arrowJson::writer::record_batches_to_json_rows(&group_data)?
             .iter()
             .map(|row| {
                 row.iter()
-                    .map(|(k, v)| Label {
-                        name: k.to_owned(),
-                        value: v.as_str().unwrap().to_owned(),
-                    })
-                    .collect::<Signature>()
+                    .map(|(k, v)| (k.to_owned(), v.as_str().unwrap().to_owned()))
+                    .collect::<HashMap<_, _>>()
             })
             .collect::<Vec<_>>();
 
         // 2. Fill each group data
         let mut values = vec![];
-        for signature in signatures {
+        for metric in metrics {
             // fetch all data for the group
             let mut df_data = table.clone().filter(
                 col("_timestamp")
@@ -131,8 +126,8 @@ impl QueryEngine {
             for mat in selector.matchers.matchers.iter() {
                 df_data = df_data.filter(col(mat.name.clone()).eq(lit(mat.value.clone())))?;
             }
-            for label in signature.iter().cloned() {
-                df_data = df_data.filter(col(label.name).eq(lit(label.value)))?;
+            for (label_name, label_value) in metric.iter() {
+                df_data = df_data.filter(col(label_name).eq(lit(label_value)))?;
             }
             df_data = df_data.select(vec![col("_timestamp"), col("value")])?;
             let df_data = df_data.collect().await?;
@@ -165,7 +160,7 @@ impl QueryEngine {
             }
 
             values.push(VectorValue {
-                metric: signature,
+                metric,
                 values: group_points,
             })
         }

@@ -115,7 +115,10 @@ fn create_record_batch(schema: Arc<Schema>, data: &[TimeSeries]) -> Result<Recor
                     .get(field_name)
                     .map(|v| v.as_str().unwrap())
                     .unwrap_or_default();
-                field_values.entry(field_name).or_default().push(field_value);
+                field_values
+                    .entry(field_name)
+                    .or_default()
+                    .push(field_value);
             }
             time_field_values.push(sample.timestamp * 1_000_000);
             value_field_values.push(sample.value.parse::<f64>().unwrap());
