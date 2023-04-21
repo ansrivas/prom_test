@@ -1,6 +1,8 @@
+mod histogram;
 mod irate;
 mod rate;
 
+pub(crate) use histogram::histogram_quantile;
 pub(crate) use irate::irate;
 pub(crate) use rate::rate;
 

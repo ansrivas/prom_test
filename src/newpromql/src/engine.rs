@@ -220,37 +220,21 @@ impl QueryEngine {
             DataFusionError::Internal(format!("Unsupported function: {}", func.name))
         })?;
 
-        /* XXX
-        {
-            dbg!(func.name);
-            std::fs::write(
-                format!("/tmp/XXX.{}.func.rs", func.name),
-                format!("{func:#?}\n"),
-            )
-            .unwrap();
-            std::fs::write(
-                format!("/tmp/XXX.{}.args.rs", func.name),
-                format!("{args:#?}\n"),
-            )
-            .unwrap();
-        }
-        // XXX */
-
         let last_arg = args
             .last()
             .expect("BUG: promql-parser should have validated function arguments");
-        let input = if func_name != Func::HistogramQuantile {
+        let input = if func_name != Func::Rate {
             self.prom_expr_to_plan(*last_arg).await?
         } else {
             // XXX-HACK
             use std::{fs::File, path::Path};
 
-            let path = Path::new("/tmp/XXX.input.json");
-            if let Ok(f) = File::open(path) {
+            let cache = Path::new("/tmp/XXX.rate-output.json");
+            if let Ok(f) = File::open(cache) {
                 serde_json::from_reader(f).unwrap()
             } else {
                 let input = self.prom_expr_to_plan(*last_arg).await?; // expensive operation
-                let f = File::create(path).unwrap();
+                let f = File::create(cache).unwrap();
                 serde_json::to_writer(f, &input).unwrap();
                 input
             }
@@ -296,14 +280,7 @@ impl QueryEngine {
                         }
                     }
                 };
-                if !(0. ..=1.).contains(&phi) {
-                    return Err(DataFusionError::Internal(format!(
-                        "{}: the first argument must be between 0 and 1",
-                        func.name
-                    )));
-                }
-                //XXX let buckets = self.prom_expr_to_plan(args[1].clone()).await?;
-                todo!("XXX phi={phi}")
+                functions::histogram_quantile(phi, input)?
             }
             Func::HistogramSum => todo!(),
             Func::HoltWinters => todo!(),

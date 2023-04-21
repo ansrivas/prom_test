@@ -38,6 +38,7 @@ async fn main() {
 
     let prom_expr = parser::parse(&cli.expr).unwrap();
     //XXX dbg!(&prom_expr);
+    std::fs::write("/tmp/XXX.ast.rs", format!("{prom_expr:#?}\n")).unwrap(); // XXX-DELETEME
 
     let eval_stmt = parser::EvalStmt {
         expr: prom_expr,
