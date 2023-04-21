@@ -1,3 +1,11 @@
+use std::{
+    collections::HashMap,
+    fs,
+    path::Path,
+    sync::Arc,
+    time::{Duration, UNIX_EPOCH},
+};
+
 use arrow_array::{ArrayRef, Float64Array};
 use clap::Parser;
 use datafusion::{
@@ -12,12 +20,6 @@ use datafusion::{
 };
 use promql_parser::parser;
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
-use std::collections::HashMap;
-use std::fs::{self, File};
-use std::io::prelude::*;
-use std::sync::Arc;
-use std::time::{Duration, UNIX_EPOCH};
 
 #[derive(Debug, Parser)]
 struct Cli {
@@ -63,126 +65,105 @@ async fn main() {
 
 // create local session context with an in-memory table
 fn create_context() -> Result<SessionContext> {
-    let data_path = "./samples/";
     let ctx = SessionContext::new();
-
-    let paths = fs::read_dir(data_path).unwrap();
-    for path in paths {
-        create_table_by_file(&ctx, path.unwrap().path().to_str().unwrap()).unwrap();
+    let paths = fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../samples")).unwrap();
+    for dentry in paths {
+        create_table_by_file(&ctx, dentry.unwrap().path())?;
     }
-
     Ok(ctx)
 }
 
-fn create_table_by_file<'a>(ctx: &'a SessionContext, path: &'a str) -> Result<()> {
-    let data = load_file_contents(path)?;
-    let values: MetricResult = match serde_json::from_str(&data) {
-        Ok(v) => v,
-        Err(e) => {
-            return Err(DataFusionError::Execution(format!(
-                "Failed to parse json file: {}",
-                e
-            )));
-        }
-    };
-
-    let table_name = get_table_name(&values)?;
-    let schema = create_schema_from_record(&values.data.result[0])?;
-    let schema = Arc::new(schema);
-    let batch = create_record_batch(schema.clone(), &values.data.result)?;
+fn create_table_by_file<P: AsRef<Path>>(ctx: &SessionContext, path: P) -> Result<()> {
+    let path = path.as_ref();
+    let data = fs::read(path).unwrap();
+    let resp: Response = serde_json::from_slice(&data).map_err(|e| {
+        DataFusionError::Execution(format!("Failed to parse JSON file {}: {e}", path.display()))
+    })?;
+    let schema = Arc::new(create_schema_from_record(&resp.data.result[0]));
+    let batch = create_record_batch(schema.clone(), &resp.data.result)?;
     let provider = MemTable::try_new(schema, vec![vec![batch]])?;
-    ctx.register_table(table_name.as_str(), Arc::new(provider))?;
+    let table_name = resp.data.result[0].metric["__name__"].as_str().unwrap();
+    ctx.register_table(table_name, Arc::new(provider))?;
     Ok(())
 }
 
-fn get_table_name(data: &MetricResult) -> Result<String> {
-    let metric = data.data.result[0].metric.clone();
-    let name = metric.get("__name__").unwrap().as_str().unwrap();
-    Ok(name.to_string())
-}
-
-fn create_schema_from_record(data: &MetricResultItem) -> Result<Schema> {
-    let mut fields = Vec::new();
-    let metric = data.metric.clone();
-    for (key, _value) in metric {
-        let field = Field::new(&key, DataType::Utf8, true);
-        fields.push(field);
-    }
+fn create_schema_from_record(data: &TimeSeries) -> Schema {
+    let mut fields = data
+        .metric
+        .keys()
+        .map(|k| Field::new(k, DataType::Utf8, true))
+        .collect::<Vec<_>>();
     fields.push(Field::new("_timestamp", DataType::Int64, false));
     fields.push(Field::new("value", DataType::Float64, false));
-    Ok(Schema::new(fields))
+    Schema::new(fields)
 }
 
-fn create_record_batch(schema: Arc<Schema>, data: &[MetricResultItem]) -> Result<RecordBatch> {
-    let fields = schema.fields();
-    let mut fileds_values = HashMap::new();
+fn create_record_batch(schema: Arc<Schema>, data: &[TimeSeries]) -> Result<RecordBatch> {
+    let mut field_values = HashMap::<_, Vec<_>>::new();
     let mut time_field_values = Vec::new();
     let mut value_field_values = Vec::new();
-    for value in data {
-        for val in &value.values {
-            for field in fields {
+
+    for time_series in data {
+        for sample in &time_series.values {
+            for field in schema.fields() {
                 let field_name = field.name();
                 if field_name == "_timestamp" || field_name == "value" {
                     continue;
                 }
-                let field_value = match value.metric.get(field_name) {
-                    Some(v) => v.as_str().unwrap(),
-                    None => "",
-                };
-                let field_values = fileds_values.entry(field_name).or_insert(Vec::new());
-                field_values.push(field_value);
+                let field_value = time_series
+                    .metric
+                    .get(field_name)
+                    .map(|v| v.as_str().unwrap())
+                    .unwrap_or_default();
+                field_values.entry(field_name).or_default().push(field_value);
             }
-            time_field_values.push(val.timestamp * 1_000_000);
-            value_field_values.push(val.value.parse::<f64>().unwrap());
+            time_field_values.push(sample.timestamp * 1_000_000);
+            value_field_values.push(sample.value.parse::<f64>().unwrap());
         }
     }
 
     let mut columns: Vec<ArrayRef> = Vec::new();
-    for field in fields {
+    for field in schema.fields() {
         let field_name = field.name();
         if field_name == "_timestamp" || field_name == "value" {
             continue;
         }
-        let field_values = fileds_values.get(field_name).unwrap();
+        let field_values = &field_values[field_name];
         let column = Arc::new(StringArray::from(field_values.clone()));
         columns.push(column);
     }
     columns.push(Arc::new(Int64Array::from(time_field_values)));
     columns.push(Arc::new(Float64Array::from(value_field_values)));
 
-    let batch = RecordBatch::try_new(schema.clone(), columns.to_vec())?;
-    Ok(batch)
+    Ok(RecordBatch::try_new(schema.clone(), columns)?)
 }
 
-fn load_file_contents(path: &str) -> Result<String> {
-    let mut file = File::open(path).expect("Failed to open file");
-    let mut contents = String::new();
-    file.read_to_string(&mut contents)
-        .expect("Could not read file");
-    Ok(contents)
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-struct MetricResult {
+/// Prometheus HTTP API response
+///
+/// See https://prometheus.io/docs/prometheus/latest/querying/api/
+#[derive(Debug, Serialize, Deserialize)]
+struct Response {
     pub status: String,
-    pub data: MetricResultData,
+    pub data: ResponseData,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-struct MetricResultData {
-    #[serde(rename = "resultType")]
-    pub result_type: String,
-    pub result: Vec<MetricResultItem>,
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ResponseData {
+    result_type: String,
+    result: Vec<TimeSeries>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-struct MetricResultItem {
-    pub metric: Map<String, Value>,
-    pub values: Vec<MetricResultValue>,
+/// See https://docs.victoriametrics.com/keyConcepts.html#time-series
+#[derive(Debug, Serialize, Deserialize)]
+struct TimeSeries {
+    metric: serde_json::Map<String, serde_json::Value>,
+    values: Vec<DataPoint>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-struct MetricResultValue {
-    pub timestamp: i64,
-    pub value: String,
+/// See https://docs.victoriametrics.com/keyConcepts.html#raw-samples
+#[derive(Debug, Serialize, Deserialize)]
+struct DataPoint {
+    timestamp: i64,
+    value: String,
 }
