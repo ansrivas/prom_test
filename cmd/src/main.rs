@@ -79,6 +79,7 @@ fn create_table_by_file<P: AsRef<Path>>(ctx: &SessionContext, path: P) -> Result
     let resp: Response = serde_json::from_slice(&data).map_err(|e| {
         DataFusionError::Execution(format!("Failed to parse JSON file {}: {e}", path.display()))
     })?;
+    // XXX-FIXME: collect labels from all time series, not only the first one
     let schema = Arc::new(create_schema_from_record(&resp.data.result[0]));
     let batch = create_record_batch(schema.clone(), &resp.data.result)?;
     let provider = MemTable::try_new(schema, vec![vec![batch]])?;

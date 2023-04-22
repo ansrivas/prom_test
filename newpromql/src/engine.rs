@@ -99,6 +99,8 @@ impl QueryEngine {
             .filter(|&field_name| field_name != "value" && field_name != "_timestamp")
             .map(col)
             .collect::<Vec<_>>();
+        // XXX-OPTIMIZE: filter by time range before aggregation --- the smaller the
+        // data set, the fewer comparison operations the aggregator has to make.
         let group_data = table.clone().aggregate(group_by, vec![])?.collect().await?;
         let metrics = arrowJson::writer::record_batches_to_json_rows(&group_data)?
             .iter()
