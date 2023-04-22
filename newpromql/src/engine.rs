@@ -87,20 +87,19 @@ impl QueryEngine {
         selector: &VectorSelector,
         range: &Duration,
     ) -> Result<Vec<VectorValue>> {
-        // 1. Group by sets of labels (a.k.a. signatures)
         let table_name = selector.name.as_ref().unwrap();
         let table = self.ctx.table(table_name).await?;
+
+        // 1. Group by metrics (sets of label name-value pairs)
         let group_by = table
             .schema()
             .fields()
             .iter()
-            .filter_map(|field| {
-                let field_name = field.name();
-                (field_name != "value" && field_name != "_timestamp").then(|| col(field_name))
-            })
+            .map(datafusion::common::DFField::name)
+            .filter(|&field_name| field_name != "value" && field_name != "_timestamp")
+            .map(col)
             .collect::<Vec<_>>();
-        let df_group = table.clone().aggregate(group_by, vec![])?;
-        let group_data = df_group.collect().await?;
+        let group_data = table.clone().aggregate(group_by, vec![])?.collect().await?;
         let metrics = arrowJson::writer::record_batches_to_json_rows(&group_data)?
             .iter()
             .map(|row| {
