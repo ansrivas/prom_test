@@ -22,6 +22,9 @@ use newpromql::value::*;
 use promql_parser::parser;
 use serde::{Deserialize, Serialize};
 
+mod api;
+mod http;
+
 #[derive(Debug, Parser)]
 struct Cli {
     #[arg(help = r#"PromQL expression
@@ -33,13 +36,25 @@ Examples:
     expr: String,
     #[arg(short, long, help = "debug mode")]
     debug: bool,
+    #[arg(short, long, help = "server mode")]
+    server: bool,
 }
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::fmt()
+        .with_target(false)
+        .compact()
+        .init();
     let cli = Cli::parse();
     let start_time = time::Instant::now();
+
+    if cli.server {
+        tracing::info!("start http server: {}", start_time.elapsed());
+        http::server().await;
+        tracing::info!("stopping http server: {}", start_time.elapsed());
+        return;
+    }
 
     let prom_expr = parser::parse(&cli.expr).unwrap();
     if cli.debug {
