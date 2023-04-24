@@ -174,7 +174,7 @@ impl QueryEngine {
         let cache_data = self.data_cache.get_ref_matrix_values().unwrap();
 
         let start = self.start + (self.interval * self.exec_i) - range.as_micros() as i64;
-        let end = self.end;
+        let end = self.start + (self.interval * self.exec_i) + self.interval;
 
         let mut values = vec![];
         for metric in cache_data {
