@@ -1,11 +1,11 @@
 use datafusion::error::{DataFusionError, Result};
 
-use crate::value::{RangeValue, Sample, Value};
+use crate::value::{InstantValue, Value};
 
 pub(crate) fn topk(n: usize, data: &Value) -> Result<Value> {
-    let mut topk_value: Vec<RangeValue> = Vec::new();
+    let mut topk_value: Vec<InstantValue> = Vec::new();
     let data = match data {
-        Value::RangeValue(v) => v,
+        Value::VectorValues(v) => v,
         _ => {
             return Err(DataFusionError::Internal(
                 "topk function only accept vector".to_string(),
@@ -17,7 +17,7 @@ pub(crate) fn topk(n: usize, data: &Value) -> Result<Value> {
     for (i, item) in data.iter().enumerate() {
         score_value.push(Item {
             index: i,
-            value: topk_exec(&item.values).unwrap(),
+            value: item.value.value,
         });
     }
     score_value.sort_by(|a, b| b.value.partial_cmp(&a.value).unwrap());
@@ -26,15 +26,10 @@ pub(crate) fn topk(n: usize, data: &Value) -> Result<Value> {
         topk_value.push(data[item.index].clone());
     }
 
-    Ok(Value::MatrixValues(topk_value))
-}
-
-fn topk_exec(data: &[Sample]) -> Result<i64> {
-    let value: f64 = data.iter().map(|x| x.value).sum();
-    Ok(value as i64)
+    Ok(Value::VectorValues(topk_value))
 }
 
 struct Item {
     index: usize,
-    value: i64,
+    value: f64,
 }

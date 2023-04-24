@@ -3,6 +3,7 @@ use std::collections::HashMap;
 
 pub static _FIELD_NAME: &str = "__name__";
 pub static FIELD_HASH: &str = "__hash__";
+pub static FIELD_TYPE: &str = "metric_type";
 pub static FIELD_TIME: &str = "_timestamp";
 pub static FIELD_VALUE: &str = "value";
 
@@ -30,11 +31,27 @@ pub struct RangeValue {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Value {
     InstantValue(InstantValue),
-    RangeValue(Vec<RangeValue>),
+    RangeValue(RangeValue),
     VectorValues(Vec<InstantValue>),
     MatrixValues(Vec<RangeValue>),
     NumberLiteral(f64),
     None,
+}
+
+impl Value {
+    pub fn is_empty(&self) -> bool {
+        match self {
+            Value::None => true,
+            _ => false,
+        }
+    }
+
+    pub fn get_ref_matrix_values(&self) -> Option<&Vec<RangeValue>> {
+        match self {
+            Value::MatrixValues(values) => Some(values),
+            _ => None,
+        }
+    }
 }
 
 pub fn signature(data: &Metric) -> String {

@@ -11,6 +11,7 @@ use promql_parser::parser::{
 use std::{
     collections::HashMap,
     str::FromStr,
+    sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -28,6 +29,7 @@ pub struct QueryEngine {
     lookback_delta: i64,
     exec_i: i64,
     exec_max: i64,
+    data_cache: Arc<Value>,
 }
 
 impl QueryEngine {
@@ -40,6 +42,7 @@ impl QueryEngine {
             lookback_delta: Duration::from_secs(300).as_micros() as i64,
             exec_i: 0,
             exec_max: 1,
+            data_cache: Arc::new(Value::None),
         }
     }
 
@@ -100,7 +103,7 @@ impl QueryEngine {
     }
 
     #[async_recursion]
-    async fn exec_expr(&self, prom_expr: PromExpr) -> Result<Value> {
+    async fn exec_expr(&mut self, prom_expr: PromExpr) -> Result<Value> {
         Ok(match &prom_expr {
             PromExpr::Aggregate(AggregateExpr {
                 op,
@@ -120,12 +123,15 @@ impl QueryEngine {
             PromExpr::Subquery(_) => todo!(),
             PromExpr::NumberLiteral(NumberLiteral { val }) => Value::NumberLiteral(*val),
             PromExpr::StringLiteral(_) => todo!(),
-            PromExpr::VectorSelector(_) => todo!(),
+            PromExpr::VectorSelector(v) => {
+                let data = self.vector_selector(v).await?;
+                Value::VectorValues(data)
+            }
             PromExpr::MatrixSelector(MatrixSelector {
                 vector_selector,
                 range,
             }) => {
-                let data = self.matrix_selector(vector_selector, range).await?;
+                let data = self.matrix_selector(vector_selector, *range).await?;
                 Value::MatrixValues(data)
             }
             PromExpr::Call(Call { func, args }) => self.call_expr(func, args).await?,
@@ -133,17 +139,72 @@ impl QueryEngine {
     }
 
     /// MatrixSelector is a special case of VectorSelector that returns a matrix of samples.
+    async fn vector_selector(&mut self, selector: &VectorSelector) -> Result<Vec<InstantValue>> {
+        if self.data_cache.is_empty() {
+            self.selector_load_data(selector, None).await?;
+        }
+        let cache_data = self.data_cache.get_ref_matrix_values().unwrap();
+
+        let mut values = vec![];
+        for metric in cache_data {
+            let value = match metric.values.last() {
+                Some(v) => v.clone(),
+                None => Sample {
+                    timestamp: self.end,
+                    value: 0.0,
+                },
+            };
+            values.push(InstantValue {
+                metric: metric.metric.clone(),
+                value,
+            });
+        }
+        Ok(values)
+    }
+
+    /// MatrixSelector is a special case of VectorSelector that returns a matrix of samples.
     async fn matrix_selector(
-        &self,
+        &mut self,
         selector: &VectorSelector,
-        range: &Duration,
+        range: Duration,
     ) -> Result<Vec<RangeValue>> {
+        if self.data_cache.is_empty() {
+            self.selector_load_data(selector, Some(range)).await?;
+        }
+        let cache_data = self.data_cache.get_ref_matrix_values().unwrap();
+
+        let start = self.start + (self.interval * self.exec_i) - range.as_micros() as i64;
+        let end = self.end;
+
+        let mut values = vec![];
+        for metric in cache_data {
+            let metric_data = metric
+                .values
+                .iter()
+                .filter(|v| v.timestamp > start && v.timestamp <= end)
+                .map(|v| v.clone())
+                .collect::<Vec<_>>();
+            values.push(RangeValue {
+                metric: metric.metric.clone(),
+                values: metric_data,
+            });
+        }
+        Ok(values)
+    }
+
+    async fn selector_load_data(
+        &mut self,
+        selector: &VectorSelector,
+        range: Option<Duration>,
+    ) -> Result<()> {
         let table_name = selector.name.as_ref().unwrap();
         let table = self.ctx.table(table_name).await?;
 
-        let start = self.start + (self.interval * self.exec_i);
-        let end = start + self.interval;
-        let range = range.as_micros() as i64;
+        let start = match range {
+            Some(range) => self.start + (self.interval * self.exec_i) - range.as_micros() as i64,
+            None => self.start + (self.interval * self.exec_i) - self.lookback_delta,
+        };
+        let end = self.end;
 
         let mut df_group = table.clone().filter(
             col(FIELD_TIME)
@@ -174,55 +235,64 @@ impl QueryEngine {
             })
             .collect::<Vec<_>>();
 
-        // 2. Get each group data
-        let mut values = vec![];
-        for metric in metrics {
-            let mut df_data = table.clone().filter(
-                col(FIELD_TIME)
-                    .gt(lit(start - range))
-                    .and(col(FIELD_TIME).lt_eq(lit(end))),
-            )?;
-            for mat in selector.matchers.matchers.iter() {
-                df_data = df_data.filter(col(mat.name.clone()).eq(lit(mat.value.clone())))?;
-            }
-            // for (label_name, label_value) in metric.iter() {
-            //     df_data = df_data.filter(col(label_name).eq(lit(label_value)))?;
-            // }
-            df_data = df_data.filter(
-                col(super::value::FIELD_HASH)
-                    .eq(lit(metric.get(super::value::FIELD_HASH).unwrap())),
-            )?;
-            df_data = df_data.select(vec![col(FIELD_TIME), col(FIELD_VALUE)])?;
-            let metric_data = df_data.collect().await?;
+        // 2. Fetch all samples and then group by metrics
+        let mut df_data = table.clone().filter(
+            col(FIELD_TIME)
+                .gt(lit(start))
+                .and(col(FIELD_TIME).lt_eq(lit(end))),
+        )?;
+        for mat in selector.matchers.matchers.iter() {
+            df_data = df_data.filter(col(mat.name.clone()).eq(lit(mat.value.clone())))?;
+        }
+        df_data = df_data.select(vec![col(FIELD_HASH), col(FIELD_TIME), col(FIELD_VALUE)])?;
+        let metric_data = df_data.collect().await?;
+        let metric_data = arrowJson::writer::record_batches_to_json_rows(&metric_data)?;
+        let mut metric_data_group: HashMap<String, Vec<Sample>> =
+            HashMap::with_capacity(metrics.len());
+        metric_data.iter().for_each(|row| {
+            let hash_value = row.get(FIELD_HASH).unwrap().as_str().unwrap().to_owned();
+            let entry = metric_data_group.entry(hash_value).or_default();
+            entry.push(Sample {
+                timestamp: row.get(FIELD_TIME).unwrap().as_i64().unwrap(),
+                value: row.get(FIELD_VALUE).unwrap().as_f64().unwrap(),
+            });
+        });
 
-            let mut delta: f64 = 0.0;
-            let mut last_value = 0.0;
-            let metric_data = arrowJson::writer::record_batches_to_json_rows(&metric_data)?
-                .iter()
-                .map(|row| {
-                    let timestamp = row.get(FIELD_TIME).unwrap().as_i64().unwrap();
-                    let mut value = row.get(FIELD_VALUE).unwrap().as_f64().unwrap();
-                    // Handle app restart
-                    if last_value > value {
-                        delta += last_value;
-                    }
-                    last_value = value;
-                    if delta > 0.0 {
-                        value += delta;
-                    }
-                    Sample { timestamp, value }
-                })
-                .collect::<Vec<_>>();
-            values.push(RangeValue {
+        let mut metric_values = Vec::with_capacity(metrics.len());
+        for metric in metrics {
+            let hash_value = metric.get(FIELD_HASH).unwrap().as_str();
+            let metric_data = metric_data_group.get(hash_value).unwrap();
+            metric_values.push(RangeValue {
                 metric,
-                values: metric_data,
+                values: metric_data.clone(),
             });
         }
-        Ok(values)
+
+        // Fix data about app restart
+        for metric in metric_values.iter_mut() {
+            if metric.metric.get(FIELD_TYPE).unwrap().as_str() != "counter" {
+                continue;
+            }
+            let mut delta: f64 = 0.0;
+            let mut last_value = 0.0;
+            for sample in metric.values.iter_mut() {
+                if last_value > sample.value {
+                    delta += last_value;
+                }
+                last_value = sample.value;
+                if delta > 0.0 {
+                    sample.value += delta;
+                }
+            }
+        }
+
+        // cache data
+        self.data_cache = Arc::new(Value::MatrixValues(metric_values));
+        Ok(())
     }
 
     async fn aggregate_exprs(
-        &self,
+        &mut self,
         op: &TokenType,
         expr: &PromExpr,
         param: &Option<Box<PromExpr>>,
@@ -262,7 +332,7 @@ impl QueryEngine {
         })
     }
 
-    async fn call_expr(&self, func: &Function, args: &FunctionArgs) -> Result<Value> {
+    async fn call_expr(&mut self, func: &Function, args: &FunctionArgs) -> Result<Value> {
         use crate::functions::Func;
 
         let func_name = Func::from_str(func.name).map_err(|_| {
