@@ -13,7 +13,10 @@ arrow-schema = { version = "36.0", features = ["serde"] }
 async-recursion = "1.0"
 async-stream = "0.3"
 bytes = "1.4"
-chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+chrono = { version = "0.4", default-features = false, features = [
+    "clock",
+    "serde",
+] }
 clap = { version = "4.2", features = ["derive"] }
 dashmap = { version = "5.4.0", features = ["serde"] }
 datafusion.workspace = true
@@ -39,3 +42,6 @@ tonic = { version = "0.8", features = ["tls"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid = { version = "1", features = ["serde", "v4", "fast-rng"] }
+axum = { version = "0.6.16", features = ["headers"] }
+hyper = { version = "0.14.26", features = ["full"] }
+tower-http = { version = "0.4", features = ["trace"] }

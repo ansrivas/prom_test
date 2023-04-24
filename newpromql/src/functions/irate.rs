@@ -1,13 +1,10 @@
-use chrono::Duration;
-
 use datafusion::error::{DataFusionError, Result};
 
-use crate::value::{Point, StackValue, VectorValueResponse};
+use crate::value::{InstantValue, Sample, Value};
 
-pub(crate) fn irate(data: &StackValue) -> Result<StackValue> {
-    let mut rate_value: Vec<VectorValueResponse> = Vec::new();
+pub(crate) fn irate(timestamp: i64, data: &Value) -> Result<Value> {
     let data = match data {
-        StackValue::MatrixValue(v) => v,
+        Value::MatrixValues(v) => v,
         _ => {
             return Err(DataFusionError::Internal(
                 "rate function only accept vector".to_string(),
@@ -15,41 +12,30 @@ pub(crate) fn irate(data: &StackValue) -> Result<StackValue> {
         }
     };
 
-    for metric in data {
-        let mut metric_data = VectorValueResponse {
-            metric: metric.metric.clone(),
-            values: Vec::new(),
-        };
-        for (t, values) in metric.values.iter() {
-            let value = irate_exec(values);
-            match value {
-                Ok(v) => metric_data.values.push(Point {
-                    timestamp: *t,
-                    value: v,
-                }),
-                Err(e) => return Err(e),
+    let rate_values = data
+        .iter()
+        .map(|metric| {
+            let value = irate_exec(&metric.values);
+            InstantValue {
+                metric: metric.metric.clone(),
+                value: Sample { timestamp, value },
             }
-        }
-        metric_data
-            .values
-            .sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
-        rate_value.push(metric_data);
-    }
-
-    Ok(StackValue::MatrixValueResponse(rate_value))
+        })
+        .collect();
+    Ok(Value::VectorValues(rate_values))
 }
-
-fn irate_exec(data: &[Point]) -> Result<f64> {
-    if data.is_empty() {
-        return Ok(0.0);
+fn irate_exec(data: &[Sample]) -> f64 {
+    if data.len() <= 1 {
+        return 0.;
     }
     let (end_value, data) = data.split_last().unwrap();
     let previous_value = match data.last() {
         Some(v) => v,
-        None => return Ok(0.0),
+        None => return 0.,
     };
-    let value = (end_value.value - previous_value.value)
-        / ((end_value.timestamp - previous_value.timestamp)
-            / Duration::seconds(1).num_microseconds().unwrap()) as f64;
-    Ok(value)
+    let dt_seconds = (end_value.timestamp - previous_value.timestamp) / 1_000_000;
+    if dt_seconds == 0 {
+        return 0.;
+    }
+    (end_value.value - previous_value.value) / dt_seconds as f64
 }
