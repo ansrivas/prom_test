@@ -5,43 +5,17 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-anyhow = "1.0"
 arrow = { version = "36.0", features = ["simd", "ipc_compression"] }
 arrow-array = "36.0"
-arrow-flight = "36.0"
-arrow-schema = { version = "36.0", features = ["serde"] }
-async-recursion = "1.0"
-async-stream = "0.3"
-bytes = "1.4"
-chrono = { version = "0.4", default-features = false, features = [
-    "clock",
-    "serde",
-] }
+axum = { version = "0.6", features = ["headers"] }
 clap = { version = "4.2", features = ["derive"] }
-dashmap = { version = "5.4.0", features = ["serde"] }
 datafusion.workspace = true
-env_logger = "0.10"
-futures = "0.3"
-futures-util = "0.3"
-lazy_static = "1.4"
-log = "0.4.17"
 newpromql = { path = "../newpromql" }
-parking_lot = "0.12"
-parquet = { version = "36.0", features = ["arrow", "async"] }
-paste = "1.0"
 promql-parser = "0.1"
-prost = "0.11"
-rand = "0.8"
-serde = { version = "1.0", features = ["derive"] }
+serde.workspace = true
 serde_json = "1.0"
-sqlparser = "0.32"
-tempfile = "3"
-time = "0.3.17"
-tokio.workspace = true
-tonic = { version = "0.8", features = ["tls"] }
-tracing.workspace = true
-tracing-subscriber.workspace = true
-uuid = { version = "1", features = ["serde", "v4", "fast-rng"] }
-axum = { version = "0.6.16", features = ["headers"] }
-hyper = { version = "0.14.26", features = ["full"] }
+time.workspace = true
+tokio = { version = "1.27", features = ["full"] }
 tower-http = { version = "0.4", features = ["trace"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
