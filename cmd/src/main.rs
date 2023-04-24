@@ -30,6 +30,8 @@ Examples:
     topk(1, irate(zo_response_time_count{cluster="zo1"}[5m]))
     histogram_quantile(0.9, rate(zo_response_time_bucket[5m]))"#)]
     expr: String,
+    #[arg(short, long, help = "debug mode")]
+    debug: bool,
 }
 
 #[tokio::main]
@@ -39,16 +41,18 @@ async fn main() {
     let start_time = time::Instant::now();
 
     let prom_expr = parser::parse(&cli.expr).unwrap();
-    //XXX dbg!(&prom_expr);
+    if cli.debug {
+        dbg!(&prom_expr);
+    }
     std::fs::write("/tmp/XXX.ast.rs", format!("{prom_expr:#?}\n")).unwrap(); // XXX-DELETEME
 
     let eval_stmt = parser::EvalStmt {
         expr: prom_expr,
         start: UNIX_EPOCH
-            .checked_add(Duration::from_secs(1681711100))
+            .checked_add(Duration::from_secs(1681711400))
             .unwrap(),
         end: UNIX_EPOCH
-            .checked_add(Duration::from_secs(1681713200))
+            .checked_add(Duration::from_secs(1681713200)) // 2 minutes 1681711520 // 30 minutes 1681713200
             .unwrap(),
         interval: Duration::from_secs(15), // step
         lookback_delta: Duration::from_secs(300),
@@ -59,7 +63,9 @@ async fn main() {
 
     let mut engine = newpromql::QueryEngine::new(ctx);
     let data = engine.exec(eval_stmt).await.unwrap();
-    dbg!(data);
+    if cli.debug {
+        dbg!(data);
+    }
     tracing::info!("execute time: {}", start_time.elapsed());
 }
 
@@ -94,6 +100,7 @@ fn create_schema_from_record(data: &TimeSeries) -> Schema {
         .keys()
         .map(|k| Field::new(k, DataType::Utf8, true))
         .collect::<Vec<_>>();
+    fields.push(Field::new("__hash__", DataType::Utf8, false));
     fields.push(Field::new("_timestamp", DataType::Int64, false));
     fields.push(Field::new("value", DataType::Float64, false));
     Schema::new(fields)
@@ -105,10 +112,16 @@ fn create_record_batch(schema: Arc<Schema>, data: &[TimeSeries]) -> Result<Recor
     let mut value_field_values = Vec::new();
 
     for time_series in data {
+        let mut field_map = HashMap::new();
+        time_series.metric.iter().for_each(|(k, v)| {
+            field_map.insert(k.to_string(), v.to_string());
+        });
+        let hash_value = newpromql::value::signature(&field_map);
+
         for sample in &time_series.values {
             for field in schema.fields() {
                 let field_name = field.name();
-                if field_name == "_timestamp" || field_name == "value" {
+                if field_name == "__hash__" || field_name == "_timestamp" || field_name == "value" {
                     continue;
                 }
                 let field_value = time_series
@@ -117,10 +130,14 @@ fn create_record_batch(schema: Arc<Schema>, data: &[TimeSeries]) -> Result<Recor
                     .map(|v| v.as_str().unwrap())
                     .unwrap_or_default();
                 field_values
-                    .entry(field_name)
+                    .entry(field_name.to_string())
                     .or_default()
-                    .push(field_value);
+                    .push(field_value.to_string());
             }
+            field_values
+                .entry(newpromql::value::FIELD_HASH.to_string())
+                .or_default()
+                .push(hash_value.clone());
             time_field_values.push(sample.timestamp * 1_000_000);
             value_field_values.push(sample.value.parse::<f64>().unwrap());
         }
@@ -139,7 +156,7 @@ fn create_record_batch(schema: Arc<Schema>, data: &[TimeSeries]) -> Result<Recor
     columns.push(Arc::new(Int64Array::from(time_field_values)));
     columns.push(Arc::new(Float64Array::from(value_field_values)));
 
-    Ok(RecordBatch::try_new(schema.clone(), columns)?)
+    Ok(RecordBatch::try_new(schema, columns)?)
 }
 
 /// Prometheus HTTP API response
@@ -162,12 +179,12 @@ struct ResponseData {
 #[derive(Debug, Serialize, Deserialize)]
 struct TimeSeries {
     metric: serde_json::Map<String, serde_json::Value>,
-    values: Vec<DataPoint>,
+    values: Vec<Sample>,
 }
 
 /// See https://docs.victoriametrics.com/keyConcepts.html#raw-samples
 #[derive(Debug, Serialize, Deserialize)]
-struct DataPoint {
+struct Sample {
     timestamp: i64,
     value: String,
 }

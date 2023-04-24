@@ -1,11 +1,11 @@
 use datafusion::error::{DataFusionError, Result};
 
-use crate::value::{Point, StackValue, VectorValueResponse};
+use crate::value::{RangeValue, Sample, Value};
 
-pub(crate) fn topk(n: usize, data: &StackValue) -> Result<StackValue> {
-    let mut topk_value: Vec<VectorValueResponse> = Vec::new();
+pub(crate) fn topk(n: usize, data: &Value) -> Result<Value> {
+    let mut topk_value: Vec<RangeValue> = Vec::new();
     let data = match data {
-        StackValue::MatrixValueResponse(v) => v,
+        Value::RangeValue(v) => v,
         _ => {
             return Err(DataFusionError::Internal(
                 "topk function only accept vector".to_string(),
@@ -26,10 +26,10 @@ pub(crate) fn topk(n: usize, data: &StackValue) -> Result<StackValue> {
         topk_value.push(data[item.index].clone());
     }
 
-    Ok(StackValue::MatrixValueResponse(topk_value))
+    Ok(Value::MatrixValues(topk_value))
 }
 
-fn topk_exec(data: &[Point]) -> Result<i64> {
+fn topk_exec(data: &[Sample]) -> Result<i64> {
     let value: f64 = data.iter().map(|x| x.value).sum();
     Ok(value as i64)
 }
