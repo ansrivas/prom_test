@@ -34,12 +34,14 @@ pub struct QueryEngine {
 
 impl QueryEngine {
     pub fn new(ctx: SessionContext) -> Self {
+        let now = micros_since_epoch(SystemTime::now());
+        let five_min = micros(Duration::from_secs(300));
         Self {
             ctx,
-            start: (SystemTime::now().duration_since(UNIX_EPOCH).unwrap()).as_micros() as i64,
-            end: (SystemTime::now().duration_since(UNIX_EPOCH).unwrap()).as_micros() as i64,
-            interval: Duration::from_secs(300).as_micros() as i64,
-            lookback_delta: Duration::from_secs(300).as_micros() as i64,
+            start: now,
+            end: now,
+            interval: five_min,
+            lookback_delta: five_min,
             exec_i: 0,
             exec_max: 1,
             data_cache: Arc::new(Value::None),
@@ -47,20 +49,18 @@ impl QueryEngine {
     }
 
     pub async fn exec(&mut self, stmt: EvalStmt) -> Result<Value> {
-        self.start = (stmt.start.duration_since(UNIX_EPOCH).unwrap()).as_micros() as i64;
-        self.end = (stmt.end.duration_since(UNIX_EPOCH).unwrap()).as_micros() as i64;
-        if stmt.interval > Duration::from_secs(0) {
-            self.interval = stmt.interval.as_micros() as i64;
+        self.start = micros_since_epoch(stmt.start);
+        self.end = micros_since_epoch(stmt.end);
+        if stmt.interval > Duration::ZERO {
+            self.interval = micros(stmt.interval);
         }
-        if stmt.lookback_delta > Duration::from_secs(0) {
-            self.lookback_delta = stmt.lookback_delta.as_micros() as i64;
+        if stmt.lookback_delta > Duration::ZERO {
+            self.lookback_delta = micros(stmt.lookback_delta);
         }
 
-        // instant query
-        let instant_query = self.start == self.end;
-        if instant_query {
-            let data = self.exec_expr(stmt.expr).await?;
-            return Ok(data);
+        if self.start == self.end {
+            // instant query
+            return self.exec_expr(stmt.expr).await;
         }
 
         // range query
@@ -135,7 +135,7 @@ impl QueryEngine {
 
     /// MatrixSelector is a special case of VectorSelector that returns a matrix of samples.
     async fn vector_selector(&mut self, selector: &VectorSelector) -> Result<Vec<InstantValue>> {
-        if self.data_cache.is_empty() {
+        if self.data_cache.is_none() {
             self.selector_load_data(selector, None).await?;
         }
         let cache_data = self.data_cache.get_ref_matrix_values().unwrap();
@@ -160,13 +160,13 @@ impl QueryEngine {
         selector: &VectorSelector,
         range: Duration,
     ) -> Result<Vec<RangeValue>> {
-        if self.data_cache.is_empty() {
+        if self.data_cache.is_none() {
             self.selector_load_data(selector, Some(range)).await?;
         }
         let cache_data = self.data_cache.get_ref_matrix_values().unwrap();
 
         let end = self.start + (self.interval * self.exec_i) + self.interval; // 15s
-        let start = end - range.as_micros() as i64; // 5m
+        let start = end - micros(range); // 5m
 
         let mut values = vec![];
         for metric in cache_data {
@@ -193,7 +193,7 @@ impl QueryEngine {
         let table = self.ctx.table(table_name).await?;
 
         let start = match range {
-            Some(range) => self.start + (self.interval * self.exec_i) - range.as_micros() as i64,
+            Some(range) => self.start + (self.interval * self.exec_i) - micros(range),
             None => self.start + (self.interval * self.exec_i) - self.lookback_delta,
         };
         let end = self.end; // 30 minutes + 5m = 35m
@@ -406,4 +406,18 @@ impl QueryEngine {
             Func::Year => todo!(),
         })
     }
+}
+
+/// Converts `t` to the number of microseconds elapsed since the beginning of the Unix epoch.
+fn micros_since_epoch(t: SystemTime) -> i64 {
+    micros(
+        t.duration_since(UNIX_EPOCH)
+            .expect("BUG: {t} is earlier than Unix epoch"),
+    )
+}
+
+fn micros(t: Duration) -> i64 {
+    t.as_micros()
+        .try_into()
+        .expect("BUG: time value is too large to fit in i64")
 }
