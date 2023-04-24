@@ -47,7 +47,6 @@ impl QueryEngine {
     }
 
     pub async fn exec(&mut self, stmt: EvalStmt) -> Result<Value> {
-        let start_time = time::Instant::now();
         self.start = (stmt.start.duration_since(UNIX_EPOCH).unwrap()).as_micros() as i64;
         self.end = (stmt.end.duration_since(UNIX_EPOCH).unwrap()).as_micros() as i64;
         if stmt.interval > Duration::from_secs(0) {
@@ -73,12 +72,8 @@ impl QueryEngine {
                 datas.push(data);
             }
             self.exec_i += 1;
-            tracing::info!(
-                "execute exec_i {}, time: {}",
-                self.exec_i,
-                start_time.elapsed()
-            );
         }
+
         // merge data
         let mut merged_data = HashMap::new();
         let mut merged_metrics = HashMap::new();
@@ -148,11 +143,8 @@ impl QueryEngine {
         let mut values = vec![];
         for metric in cache_data {
             let value = match metric.values.last() {
-                Some(v) => v.clone(),
-                None => Sample {
-                    timestamp: self.end,
-                    value: 0.0,
-                },
+                Some(v) => *v,
+                None => continue, // have no sample
             };
             values.push(InstantValue {
                 metric: metric.metric.clone(),
@@ -173,8 +165,8 @@ impl QueryEngine {
         }
         let cache_data = self.data_cache.get_ref_matrix_values().unwrap();
 
-        let start = self.start + (self.interval * self.exec_i) - range.as_micros() as i64;
-        let end = self.start + (self.interval * self.exec_i) + self.interval;
+        let end = self.start + (self.interval * self.exec_i) + self.interval; // 15s
+        let start = end - range.as_micros() as i64; // 5m
 
         let mut values = vec![];
         for metric in cache_data {
@@ -182,7 +174,7 @@ impl QueryEngine {
                 .values
                 .iter()
                 .filter(|v| v.timestamp > start && v.timestamp <= end)
-                .map(|v| v.clone())
+                .cloned()
                 .collect::<Vec<_>>();
             values.push(RangeValue {
                 metric: metric.metric.clone(),
@@ -204,7 +196,7 @@ impl QueryEngine {
             Some(range) => self.start + (self.interval * self.exec_i) - range.as_micros() as i64,
             None => self.start + (self.interval * self.exec_i) - self.lookback_delta,
         };
-        let end = self.end;
+        let end = self.end; // 30 minutes + 5m = 35m
 
         let mut df_group = table.clone().filter(
             col(FIELD_TIME)

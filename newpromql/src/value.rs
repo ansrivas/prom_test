@@ -40,10 +40,7 @@ pub enum Value {
 
 impl Value {
     pub fn is_empty(&self) -> bool {
-        match self {
-            Value::None => true,
-            _ => false,
-        }
+        matches!(self, Value::None)
     }
 
     pub fn get_ref_matrix_values(&self) -> Option<&Vec<RangeValue>> {
