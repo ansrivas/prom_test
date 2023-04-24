@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     path::Path,
     sync::Arc,
@@ -111,7 +111,7 @@ fn create_table_by_file<P: AsRef<Path>>(ctx: &SessionContext, path: P) -> Result
         DataFusionError::Execution(format!("Failed to parse JSON file {}: {e}", path.display()))
     })?;
     // XXX-FIXME: collect labels from all time series, not only the first one
-    let schema = Arc::new(create_schema_from_record(&resp.data.result[0]));
+    let schema = Arc::new(create_schema_from_record(&resp.data.result));
     let batch = create_record_batch(metric_type, schema.clone(), &resp.data.result)?;
     let provider = MemTable::try_new(schema, vec![vec![batch]])?;
     let table_name = resp.data.result[0].metric["__name__"].as_str().unwrap();
@@ -119,16 +119,25 @@ fn create_table_by_file<P: AsRef<Path>>(ctx: &SessionContext, path: P) -> Result
     Ok(())
 }
 
-fn create_schema_from_record(data: &TimeSeries) -> Schema {
-    let mut fields = data
-        .metric
-        .keys()
-        .map(|k| Field::new(k, DataType::Utf8, true))
-        .collect::<Vec<_>>();
-    fields.push(Field::new("__hash__", DataType::Utf8, false));
-    fields.push(Field::new("metric_type", DataType::Utf8, false));
-    fields.push(Field::new("_timestamp", DataType::Int64, false));
-    fields.push(Field::new("value", DataType::Float64, false));
+fn create_schema_from_record(data: &[TimeSeries]) -> Schema {
+    let mut fields_map = HashSet::new();
+    let mut fields = Vec::new();
+    for row in data {
+        row.metric.keys().for_each(|k| {
+            if !fields_map.contains(k) {
+                fields_map.insert(k.to_string());
+                fields.push(Field::new(k, DataType::Utf8, true));
+            }
+        });
+    }
+    fields.push(Field::new(FIELD_HASH.to_string(), DataType::Utf8, false));
+    fields.push(Field::new(FIELD_TYPE.to_string(), DataType::Utf8, false));
+    fields.push(Field::new(FIELD_TIME.to_string(), DataType::Int64, false));
+    fields.push(Field::new(
+        FIELD_VALUE.to_string(),
+        DataType::Float64,
+        false,
+    ));
     Schema::new(fields)
 }
 
@@ -158,11 +167,10 @@ fn create_record_batch(
                 {
                     continue;
                 }
-                let field_value = time_series
-                    .metric
-                    .get(field_name)
-                    .map(|v| v.as_str().unwrap())
-                    .unwrap_or_default();
+                let field_value = match time_series.metric.get(field_name) {
+                    Some(v) => v.as_str().unwrap(),
+                    None => "",
+                };
                 field_values
                     .entry(field_name.to_string())
                     .or_default()
