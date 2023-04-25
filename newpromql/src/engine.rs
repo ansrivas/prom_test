@@ -15,7 +15,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use crate::{functions, value::*};
+use crate::{aggregations, functions, value::*};
 
 pub struct QueryEngine {
     ctx: SessionContext,
@@ -293,27 +293,20 @@ impl QueryEngine {
         param: &Option<Box<PromExpr>>,
         modifier: &Option<AggModifier>,
     ) -> Result<Value> {
-        use crate::aggregations::*;
-
-        println!(
-            "op: {:?}, expr: {:?}, prams: {:?}, modifier: {:?}",
-            op, expr, param, modifier
-        );
-
         let sample_time = self.start + (self.interval * self.exec_i);
         let input = self.exec_expr(expr).await?;
 
         Ok(match op.id() {
-            token::T_SUM => sum(sample_time, modifier, &input)?,
-            token::T_AVG => avg(sample_time, modifier, &input)?,
-            token::T_COUNT => count(sample_time, modifier, &input)?,
-            token::T_MIN => min(sample_time, modifier, &input)?,
-            token::T_MAX => max(sample_time, modifier, &input)?,
+            token::T_SUM => aggregations::sum(sample_time, modifier, &input)?,
+            token::T_AVG => aggregations::avg(sample_time, modifier, &input)?,
+            token::T_COUNT => aggregations::count(sample_time, modifier, &input)?,
+            token::T_MIN => aggregations::min(sample_time, modifier, &input)?,
+            token::T_MAX => aggregations::max(sample_time, modifier, &input)?,
             token::T_GROUP => Value::None,
             token::T_STDDEV => Value::None,
             token::T_STDVAR => Value::None,
-            token::T_TOPK => topk(self, param.clone().unwrap(), &input).await?,
-            token::T_BOTTOMK => bottomk(self, param.clone().unwrap(), &input).await?,
+            token::T_TOPK => aggregations::topk(self, param.clone().unwrap(), &input).await?,
+            token::T_BOTTOMK => aggregations::bottomk(self, param.clone().unwrap(), &input).await?,
             token::T_COUNT_VALUES => Value::None,
             token::T_QUANTILE => Value::None,
             _ => {
@@ -343,12 +336,13 @@ impl QueryEngine {
             Func::Abs => todo!(),
             Func::Absent => todo!(),
             Func::AbsentOverTime => todo!(),
+            Func::AvgOverTime => functions::avg_over_time(sample_time, &input)?,
             Func::Ceil => todo!(),
             Func::Changes => todo!(),
             Func::Clamp => todo!(),
             Func::ClampMax => todo!(),
             Func::ClampMin => todo!(),
-            Func::CountOverTime => todo!(),
+            Func::CountOverTime => functions::count_over_time(sample_time, &input)?,
             Func::DayOfMonth => todo!(),
             Func::DayOfWeek => todo!(),
             Func::DayOfYear => todo!(),
@@ -390,8 +384,10 @@ impl QueryEngine {
             Func::LabelJoin => todo!(),
             Func::LabelReplace => todo!(),
             Func::Ln => todo!(),
-            Func::Log2 => todo!(),
             Func::Log10 => todo!(),
+            Func::Log2 => todo!(),
+            Func::MaxOverTime => functions::max_over_time(sample_time, &input)?,
+            Func::MinOverTime => functions::min_over_time(sample_time, &input)?,
             Func::Minute => todo!(),
             Func::Month => todo!(),
             Func::PredictLinear => todo!(),
@@ -403,6 +399,7 @@ impl QueryEngine {
             Func::Sgn => todo!(),
             Func::Sort => todo!(),
             Func::SortDesc => todo!(),
+            Func::SumOverTime => functions::sum_over_time(sample_time, &input)?,
             Func::Time => todo!(),
             Func::Timestamp => todo!(),
             Func::Vector => todo!(),

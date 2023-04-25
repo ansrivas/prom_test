@@ -1,30 +1,12 @@
-use datafusion::error::{DataFusionError, Result};
+use datafusion::error::Result;
 
-use crate::value::{InstantValue, Sample, Value};
+use crate::value::{Sample, Value};
 
 pub(crate) fn irate(timestamp: i64, data: &Value) -> Result<Value> {
-    let data = match data {
-        Value::MatrixValues(v) => v,
-        _ => {
-            return Err(DataFusionError::Internal(
-                "rate function only accept vector".to_string(),
-            ))
-        }
-    };
-
-    let rate_values = data
-        .iter()
-        .map(|metric| {
-            let value = irate_exec(&metric.values);
-            InstantValue {
-                metric: metric.metric.clone(),
-                value: Sample { timestamp, value },
-            }
-        })
-        .collect();
-    Ok(Value::VectorValues(rate_values))
+    super::eval_idelta(timestamp, data, "irate", exec)
 }
-fn irate_exec(data: &[Sample]) -> f64 {
+
+fn exec(data: &[Sample]) -> f64 {
     if data.len() <= 1 {
         return 0.;
     }
