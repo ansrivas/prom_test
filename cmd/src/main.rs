@@ -18,7 +18,7 @@ use datafusion::{
     error::{DataFusionError, Result},
     prelude::SessionContext,
 };
-use newpromql::value::*;
+use newpromql::value::{self, FIELD_HASH, FIELD_TIME, FIELD_TYPE, FIELD_VALUE};
 use promql_parser::parser;
 use serde::{Deserialize, Serialize};
 
@@ -30,14 +30,18 @@ struct Cli {
     #[arg(help = r#"PromQL expression
 
 Examples:
+    zo_http_incoming_requests
+    zo_http_incoming_requests @ 1681713185
     irate(zo_response_time_count{cluster="zo1"}[5m])
     topk(1, irate(zo_response_time_count{cluster="zo1"}[5m]))
     histogram_quantile(0.9, rate(zo_response_time_bucket[5m]))"#)]
     expr: String,
-    #[arg(short, long, help = "debug mode")]
-    debug: bool,
-    #[arg(short, long, help = "server mode")]
+    /// Run as HTTP API server
+    #[arg(short, long)]
     server: bool,
+    /// Enable debug mode
+    #[arg(short, long)]
+    debug: bool,
 }
 
 #[tokio::main]
@@ -60,15 +64,16 @@ async fn main() {
     if cli.debug {
         dbg!(&prom_expr);
     }
-    std::fs::write("/tmp/XXX.ast.rs", format!("{prom_expr:#?}\n")).unwrap(); // XXX-DELETEME
 
     let eval_stmt = parser::EvalStmt {
         expr: prom_expr,
+        // 1681711520 -- 2 minutes
+        // 1681713200 -- 30 minutes
         start: UNIX_EPOCH
             .checked_add(Duration::from_secs(1681711400))
             .unwrap(),
         end: UNIX_EPOCH
-            .checked_add(Duration::from_secs(1681711400)) // 2 minutes 1681711520 // 30 minutes 1681713200
+            .checked_add(Duration::from_secs(1681711400))
             .unwrap(),
         interval: Duration::from_secs(15), // step
         lookback_delta: Duration::from_secs(300),
@@ -155,7 +160,7 @@ fn create_record_batch(
         time_series.metric.iter().for_each(|(k, v)| {
             field_map.insert(k.to_string(), v.to_string());
         });
-        let hash_value = signature(&field_map);
+        let hash_value = value::signature(&field_map);
 
         for sample in &time_series.values {
             for field in schema.fields() {
@@ -167,12 +172,12 @@ fn create_record_batch(
                 {
                     continue;
                 }
-                let field_value = match time_series.metric.get(field_name) {
-                    Some(v) => v.as_str().unwrap(),
-                    None => "",
-                };
+                let field_value = time_series
+                    .metric
+                    .get(field_name)
+                    .map_or("", |v| v.as_str().unwrap());
                 field_values
-                    .entry(field_name.to_string())
+                    .entry(field_name.clone())
                     .or_default()
                     .push(field_value.to_string());
             }
@@ -192,7 +197,7 @@ fn create_record_batch(
     let mut columns: Vec<ArrayRef> = Vec::new();
     for field in schema.fields() {
         let field_name = field.name();
-        if field_name == "_timestamp" || field_name == "value" {
+        if field_name == FIELD_TIME || field_name == FIELD_VALUE {
             continue;
         }
         let field_values = &field_values[field_name];

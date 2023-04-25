@@ -1,13 +1,12 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-pub static _FIELD_NAME: &str = "__name__";
-pub static FIELD_HASH: &str = "__hash__";
-pub static FIELD_TYPE: &str = "metric_type";
-pub static FIELD_TIME: &str = "_timestamp";
-pub static FIELD_VALUE: &str = "value";
+pub const FIELD_HASH: &str = "__hash__";
+pub const FIELD_TYPE: &str = "metric_type";
+pub const FIELD_TIME: &str = "_timestamp";
+pub const FIELD_VALUE: &str = "value";
 
-type Metric = HashMap<String, String>;
+pub type Metric = HashMap<String, String>;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Sample {
@@ -39,7 +38,7 @@ pub enum Value {
 }
 
 impl Value {
-    pub fn is_empty(&self) -> bool {
+    pub fn is_none(&self) -> bool {
         matches!(self, Value::None)
     }
 
