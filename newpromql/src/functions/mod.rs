@@ -89,7 +89,7 @@ pub(crate) fn eval_idelta(
         Value::None => return Ok(Value::None),
         _ => {
             return Err(DataFusionError::Internal(format!(
-                "function [{fn_name}] only accept vector"
+                "{fn_name}: matrix argument expected"
             )))
         }
     };
