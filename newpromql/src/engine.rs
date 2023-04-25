@@ -149,10 +149,16 @@ impl QueryEngine {
                 Some(v) => *v,
                 None => continue, // have no sample
             };
-            values.push(InstantValue {
-                metric: metric.metric.clone(),
-                value,
-            });
+            values.push(
+                // XXX-FIXME: an instant query can return any valid PromQL
+                // expression type (string, scalar, instant and range vectors).
+                //
+                // See https://promlabs.com/blog/2020/06/18/the-anatomy-of-a-promql-query/#instant-queries
+                InstantValue {
+                    metric: metric.metric.clone(),
+                    value,
+                },
+            );
         }
         Ok(values)
     }
