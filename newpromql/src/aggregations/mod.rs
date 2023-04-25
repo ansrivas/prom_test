@@ -3,7 +3,6 @@ use promql_parser::parser::AggModifier;
 use promql_parser::parser::Expr as PromExpr;
 use std::collections::HashMap;
 
-use crate::value::InstantValue;
 use crate::value::{signature, Value};
 use crate::QueryEngine;
 
@@ -147,11 +146,10 @@ pub async fn eval_top(
     } else {
         score_values.sort_by(|a, b| b.value.partial_cmp(&a.value).unwrap());
     }
-    let score_values = score_values.iter().take(n).collect::<Vec<&TopItem>>();
-
-    let mut values: Vec<InstantValue> = Vec::new();
-    for item in score_values {
-        values.push(data[item.index].clone());
-    }
+    let values = score_values
+        .iter()
+        .take(n)
+        .map(|v| data[v.index].clone())
+        .collect();
     Ok(Value::VectorValues(values))
 }
