@@ -305,15 +305,15 @@ impl QueryEngine {
 
         Ok(match op.id() {
             token::T_SUM => sum(sample_time, modifier, &input)?,
-            token::T_AVG => Value::None,
-            token::T_COUNT => Value::None,
-            token::T_MIN => Value::None,
-            token::T_MAX => Value::None,
+            token::T_AVG => avg(sample_time, modifier, &input)?,
+            token::T_COUNT => count(sample_time, modifier, &input)?,
+            token::T_MIN => min(sample_time, modifier, &input)?,
+            token::T_MAX => max(sample_time, modifier, &input)?,
             token::T_GROUP => Value::None,
             token::T_STDDEV => Value::None,
             token::T_STDVAR => Value::None,
             token::T_TOPK => topk(self, param.clone().unwrap(), &input).await?,
-            token::T_BOTTOMK => Value::None,
+            token::T_BOTTOMK => bottomk(self, param.clone().unwrap(), &input).await?,
             token::T_COUNT_VALUES => Value::None,
             token::T_QUANTILE => Value::None,
             _ => {

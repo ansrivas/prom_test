@@ -3,9 +3,8 @@ use promql_parser::parser::AggModifier;
 
 use crate::value::{InstantValue, Sample, Value};
 
-pub fn sum(timestamp: i64, param: &Option<AggModifier>, data: &Value) -> Result<Value> {
-    let score_values: Option<std::collections::HashMap<String, super::ArithmeticItem>> =
-        super::eval_arithmetic(param, data, "sum", |total, val| total + val)?;
+pub fn count(timestamp: i64, param: &Option<AggModifier>, data: &Value) -> Result<Value> {
+    let score_values = super::eval_arithmetic(param, data, "count", |_prev, _val| 0.0)?;
     if score_values.is_none() {
         return Ok(Value::None);
     }
@@ -16,7 +15,7 @@ pub fn sum(timestamp: i64, param: &Option<AggModifier>, data: &Value) -> Result<
             metric: v.labels.clone(),
             value: Sample {
                 timestamp,
-                value: v.value,
+                value: v.num as f64,
             },
         })
         .collect::<Vec<_>>();

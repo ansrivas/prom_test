@@ -1,5 +1,157 @@
+use datafusion::error::{DataFusionError, Result};
+use promql_parser::parser::AggModifier;
+use promql_parser::parser::Expr as PromExpr;
+use std::collections::HashMap;
+
+use crate::value::InstantValue;
+use crate::value::{signature, Value};
+use crate::QueryEngine;
+
+mod avg;
+mod bottomk;
+mod count;
+mod max;
+mod min;
 mod sum;
 mod topk;
 
+pub(crate) use avg::avg;
+pub(crate) use bottomk::bottomk;
+pub(crate) use count::count;
+pub(crate) use max::max;
+pub(crate) use min::min;
 pub(crate) use sum::sum;
 pub(crate) use topk::topk;
+
+pub(crate) struct ArithmeticItem {
+    pub(crate) labels: HashMap<String, String>,
+    pub(crate) value: f64,
+    pub(crate) num: usize,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct TopItem {
+    pub(crate) index: usize,
+    pub(crate) value: f64,
+}
+
+pub(crate) fn eval_arithmetic(
+    param: &Option<AggModifier>,
+    data: &Value,
+    f_name: &str,
+    f_handler: fn(total: f64, val: f64) -> f64,
+) -> Result<Option<HashMap<String, ArithmeticItem>>> {
+    let data = match data {
+        Value::VectorValues(v) => v,
+        Value::None => return Ok(None),
+        _ => {
+            return Err(DataFusionError::Internal(format!(
+                "[{f_name}] function only accept vector values"
+            )))
+        }
+    };
+
+    let mut score_values = HashMap::new();
+    match param {
+        Some(v) => match v {
+            AggModifier::By(labels) => {
+                for item in data.iter() {
+                    let mut sum_labels = HashMap::new();
+                    for label in labels {
+                        sum_labels.insert(label.clone(), item.metric.get(label).unwrap().clone());
+                    }
+                    let sum_hash = signature(&sum_labels);
+                    let entry = score_values.entry(sum_hash).or_insert(ArithmeticItem {
+                        labels: sum_labels,
+                        value: 0.0,
+                        num: 0,
+                    });
+                    entry.value = f_handler(entry.value, item.value.value);
+                    entry.num += 1;
+                }
+            }
+            AggModifier::Without(labels) => {
+                for item in data.iter() {
+                    let mut sum_labels = HashMap::new();
+                    for (label, value) in item.metric.iter() {
+                        if !labels.contains(label) {
+                            sum_labels.insert(label.clone(), value.clone());
+                        }
+                    }
+                    let sum_hash = signature(&sum_labels);
+                    let entry = score_values.entry(sum_hash).or_insert(ArithmeticItem {
+                        labels: sum_labels,
+                        value: 0.0,
+                        num: 0,
+                    });
+                    entry.value = f_handler(entry.value, item.value.value);
+                    entry.num += 1;
+                }
+            }
+        },
+        None => {
+            for item in data.iter() {
+                let entry = score_values
+                    .entry("".to_string())
+                    .or_insert(ArithmeticItem {
+                        labels: HashMap::new(),
+                        value: 0.0,
+                        num: 0,
+                    });
+                entry.value = f_handler(entry.value, item.value.value);
+                entry.num += 1;
+            }
+        }
+    }
+    Ok(Some(score_values))
+}
+
+pub async fn eval_top(
+    ctx: &mut QueryEngine,
+    param: Box<PromExpr>,
+    data: &Value,
+    is_bottom: bool,
+) -> Result<Value> {
+    let fn_name = if is_bottom { "bottomk" } else { "topk" };
+
+    let param = ctx.exec_expr(&param).await?;
+    let n = match param {
+        Value::NumberLiteral(v) => v as usize,
+        _ => {
+            return Err(DataFusionError::Internal(format!(
+                "[{fn_name}] param must be NumberLiteral"
+            )))
+        }
+    };
+
+    let data = match data {
+        Value::VectorValues(v) => v,
+        Value::None => return Ok(Value::None),
+        _ => {
+            return Err(DataFusionError::Internal(format!(
+                "[{fn_name}] function only accept vector values"
+            )))
+        }
+    };
+
+    let mut score_values = Vec::new();
+    for (i, item) in data.iter().enumerate() {
+        score_values.push(TopItem {
+            index: i,
+            value: item.value.value,
+        });
+    }
+
+    if is_bottom {
+        score_values.sort_by(|a, b| a.value.partial_cmp(&b.value).unwrap());
+    } else {
+        score_values.sort_by(|a, b| b.value.partial_cmp(&a.value).unwrap());
+    }
+    let score_values = score_values.iter().take(n).collect::<Vec<&TopItem>>();
+
+    let mut values: Vec<InstantValue> = Vec::new();
+    for item in score_values {
+        values.push(data[item.index].clone());
+    }
+    Ok(Value::VectorValues(values))
+}
