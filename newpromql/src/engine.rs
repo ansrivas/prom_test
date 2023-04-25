@@ -60,7 +60,7 @@ impl QueryEngine {
 
         if self.start == self.end {
             // instant query
-            return self.exec_expr(stmt.expr).await;
+            return self.exec_expr(&stmt.expr).await;
         }
 
         // range query
@@ -68,7 +68,7 @@ impl QueryEngine {
         self.exec_i = 0;
         self.exec_max = ((self.end - self.start) / self.interval) + 1;
         while self.exec_i < self.exec_max {
-            if let Value::VectorValues(data) = self.exec_expr(stmt.expr.clone()).await? {
+            if let Value::VectorValues(data) = self.exec_expr(&stmt.expr).await? {
                 datas.push(data);
             }
             self.exec_i += 1;
@@ -98,7 +98,7 @@ impl QueryEngine {
     }
 
     #[async_recursion]
-    async fn exec_expr(&mut self, prom_expr: PromExpr) -> Result<Value> {
+    pub async fn exec_expr(&mut self, prom_expr: &PromExpr) -> Result<Value> {
         Ok(match &prom_expr {
             PromExpr::Aggregate(AggregateExpr {
                 op,
@@ -107,26 +107,26 @@ impl QueryEngine {
                 modifier,
             }) => self.aggregate_exprs(op, expr, param, modifier).await?,
             PromExpr::Unary(UnaryExpr { expr }) => {
-                let _input = self.exec_expr(*expr.clone()).await?;
+                let _input = self.exec_expr(expr).await?;
                 todo!()
             }
             PromExpr::Binary(_) => todo!(),
             PromExpr::Paren(ParenExpr { expr }) => {
-                let _input = self.exec_expr(*expr.clone()).await?;
+                let _input = self.exec_expr(expr).await?;
                 todo!()
             }
             PromExpr::Subquery(_) => todo!(),
             PromExpr::NumberLiteral(NumberLiteral { val }) => Value::NumberLiteral(*val),
             PromExpr::StringLiteral(_) => todo!(),
             PromExpr::VectorSelector(v) => {
-                let data = self.vector_selector(v).await?;
+                let data = self.eval_vector_selector(v).await?;
                 Value::VectorValues(data)
             }
             PromExpr::MatrixSelector(MatrixSelector {
                 vector_selector,
                 range,
             }) => {
-                let data = self.matrix_selector(vector_selector, *range).await?;
+                let data = self.eval_matrix_selector(vector_selector, *range).await?;
                 Value::MatrixValues(data)
             }
             PromExpr::Call(Call { func, args }) => self.call_expr(func, args).await?,
@@ -134,7 +134,10 @@ impl QueryEngine {
     }
 
     /// MatrixSelector is a special case of VectorSelector that returns a matrix of samples.
-    async fn vector_selector(&mut self, selector: &VectorSelector) -> Result<Vec<InstantValue>> {
+    async fn eval_vector_selector(
+        &mut self,
+        selector: &VectorSelector,
+    ) -> Result<Vec<InstantValue>> {
         if self.data_cache.is_none() {
             self.selector_load_data(selector, None).await?;
         }
@@ -155,7 +158,7 @@ impl QueryEngine {
     }
 
     /// MatrixSelector is a special case of VectorSelector that returns a matrix of samples.
-    async fn matrix_selector(
+    async fn eval_matrix_selector(
         &mut self,
         selector: &VectorSelector,
         range: Duration,
@@ -165,7 +168,7 @@ impl QueryEngine {
         }
         let cache_data = self.data_cache.get_ref_matrix_values().unwrap();
 
-        let end = self.start + (self.interval * self.exec_i) + self.interval; // 15s
+        let end = self.start + (self.interval * self.exec_i); // 15s
         let start = end - micros(range); // 5m
 
         let mut values = vec![];
@@ -288,22 +291,18 @@ impl QueryEngine {
         op: &TokenType,
         expr: &PromExpr,
         param: &Option<Box<PromExpr>>,
-        _modifier: &Option<AggModifier>,
+        modifier: &Option<AggModifier>,
     ) -> Result<Value> {
-        let param = param.clone().unwrap().clone();
-        let param = self.exec_expr(*param.clone()).await?;
-        let param = match param {
-            Value::NumberLiteral(v) => v,
-            _ => {
-                return Err(DataFusionError::Internal(
-                    "aggregate param must be NumberLiteral".to_string(),
-                ))
-            }
-        };
-        let input = self.exec_expr(expr.clone()).await?;
+        println!(
+            "op: {:?}, expr: {:?}, prams: {:?}, modifier: {:?}",
+            op, expr, param, modifier
+        );
+
+        let sample_time = self.start + (self.interval * self.exec_i);
+        let input = self.exec_expr(expr).await?;
 
         Ok(match op.id() {
-            token::T_SUM => Value::None,
+            token::T_SUM => crate::aggregations::sum(sample_time, modifier, &input)?,
             token::T_AVG => Value::None,
             token::T_COUNT => Value::None,
             token::T_MIN => Value::None,
@@ -311,7 +310,9 @@ impl QueryEngine {
             token::T_GROUP => Value::None,
             token::T_STDDEV => Value::None,
             token::T_STDVAR => Value::None,
-            token::T_TOPK => crate::aggregation::topk(param as usize, &input)?,
+            token::T_TOPK => {
+                crate::aggregations::topk(self, param.clone().unwrap(), &input).await?
+            }
             token::T_BOTTOMK => Value::None,
             token::T_COUNT_VALUES => Value::None,
             token::T_QUANTILE => Value::None,
@@ -327,6 +328,8 @@ impl QueryEngine {
     async fn call_expr(&mut self, func: &Function, args: &FunctionArgs) -> Result<Value> {
         use crate::functions::Func;
 
+        let sample_time = self.start + (self.interval * self.exec_i);
+
         let func_name = Func::from_str(func.name).map_err(|_| {
             DataFusionError::Internal(format!("Unsupported function: {}", func.name))
         })?;
@@ -334,7 +337,7 @@ impl QueryEngine {
         let last_arg = args
             .last()
             .expect("BUG: promql-parser should have validated function arguments");
-        let input = self.exec_expr(*last_arg).await?;
+        let input = self.exec_expr(&last_arg).await?;
 
         Ok(match func_name {
             Func::Abs => todo!(),
@@ -383,7 +386,7 @@ impl QueryEngine {
             Func::Hour => todo!(),
             Func::Idelta => todo!(),
             Func::Increase => todo!(),
-            Func::Irate => functions::irate(self.start + (self.interval * self.exec_i), &input)?,
+            Func::Irate => functions::irate(sample_time, &input)?,
             Func::LabelJoin => todo!(),
             Func::LabelReplace => todo!(),
             Func::Ln => todo!(),
@@ -393,7 +396,7 @@ impl QueryEngine {
             Func::Month => todo!(),
             Func::PredictLinear => todo!(),
             Func::QuantileOverTime => todo!(),
-            Func::Rate => functions::rate(self.start + (self.interval * self.exec_i), &input)?,
+            Func::Rate => functions::rate(sample_time, &input)?,
             Func::Resets => todo!(),
             Func::Round => todo!(),
             Func::Scalar => todo!(),
