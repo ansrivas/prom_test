@@ -293,6 +293,8 @@ impl QueryEngine {
         param: &Option<Box<PromExpr>>,
         modifier: &Option<AggModifier>,
     ) -> Result<Value> {
+        use crate::aggregations::*;
+
         println!(
             "op: {:?}, expr: {:?}, prams: {:?}, modifier: {:?}",
             op, expr, param, modifier
@@ -302,7 +304,7 @@ impl QueryEngine {
         let input = self.exec_expr(expr).await?;
 
         Ok(match op.id() {
-            token::T_SUM => crate::aggregations::sum(sample_time, modifier, &input)?,
+            token::T_SUM => sum(sample_time, modifier, &input)?,
             token::T_AVG => Value::None,
             token::T_COUNT => Value::None,
             token::T_MIN => Value::None,
@@ -310,9 +312,7 @@ impl QueryEngine {
             token::T_GROUP => Value::None,
             token::T_STDDEV => Value::None,
             token::T_STDVAR => Value::None,
-            token::T_TOPK => {
-                crate::aggregations::topk(self, param.clone().unwrap(), &input).await?
-            }
+            token::T_TOPK => topk(self, param.clone().unwrap(), &input).await?,
             token::T_BOTTOMK => Value::None,
             token::T_COUNT_VALUES => Value::None,
             token::T_QUANTILE => Value::None,

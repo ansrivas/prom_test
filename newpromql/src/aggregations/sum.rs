@@ -65,15 +65,15 @@ pub fn sum(timestamp: i64, param: &Option<AggModifier>, data: &Value) -> Result<
         }
     }
 
-    let mut values: Vec<InstantValue> = Vec::new();
-    for item in score_values.values() {
-        values.push(InstantValue {
-            metric: item.labels.clone(),
+    let values = score_values
+        .values()
+        .map(|v| InstantValue {
+            metric: v.labels.clone(),
             value: Sample {
                 timestamp,
-                value: item.value,
+                value: v.value,
             },
-        });
-    }
+        })
+        .collect::<Vec<_>>();
     Ok(Value::VectorValues(values))
 }
