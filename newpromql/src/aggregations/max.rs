@@ -3,9 +3,20 @@ use promql_parser::parser::AggModifier;
 
 use crate::value::{InstantValue, Sample, Value};
 
-pub fn sum(timestamp: i64, param: &Option<AggModifier>, data: &Value) -> Result<Value> {
-    let score_values: Option<std::collections::HashMap<String, super::ArithmeticItem>> =
-        super::eval_arithmetic(param, data, "sum", |total, val| total + val)?;
+pub fn max(timestamp: i64, param: &Option<AggModifier>, data: &Value) -> Result<Value> {
+    let score_values =
+        super::eval_arithmetic(
+            param,
+            data,
+            "max",
+            |prev, val| {
+                if prev >= val {
+                    prev
+                } else {
+                    val
+                }
+            },
+        )?;
     if score_values.is_none() {
         return Ok(Value::None);
     }
