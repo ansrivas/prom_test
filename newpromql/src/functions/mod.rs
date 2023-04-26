@@ -26,7 +26,7 @@ pub(crate) use min_over_time::min_over_time;
 pub(crate) use rate::rate;
 pub(crate) use sum_over_time::sum_over_time;
 
-use strum_macros::EnumString;
+use strum::EnumString;
 
 /// Reference: https://prometheus.io/docs/prometheus/latest/querying/functions/
 #[derive(Debug, Clone, Copy, PartialEq, EnumString)]
