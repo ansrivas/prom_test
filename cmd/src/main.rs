@@ -53,6 +53,11 @@ async fn main() {
     let cli = Cli::parse();
     let start_time = time::Instant::now();
 
+    // read data updated timestamp
+    let data_end = get_updated_timestamp().unwrap();
+    let data_start = data_end - 1800;
+    tracing::info!("loading data with time: {} - {}", data_start, data_end);
+
     if cli.server {
         tracing::info!("start http server: {}", start_time.elapsed());
         http::server().await;
@@ -67,13 +72,11 @@ async fn main() {
 
     let eval_stmt = parser::EvalStmt {
         expr: prom_expr,
-        // 1681711520 -- 2 minutes
-        // 1681713200 -- 30 minutes
         start: UNIX_EPOCH
-            .checked_add(Duration::from_secs(1681711400))
+            .checked_add(Duration::from_secs(data_start))
             .unwrap(),
         end: UNIX_EPOCH
-            .checked_add(Duration::from_secs(1681711400))
+            .checked_add(Duration::from_secs(data_end))
             .unwrap(),
         interval: Duration::from_secs(15), // step
         lookback_delta: Duration::from_secs(300),
@@ -88,6 +91,14 @@ async fn main() {
         dbg!(data);
     }
     tracing::info!("execute time: {}", start_time.elapsed());
+}
+
+fn get_updated_timestamp() -> Result<u64> {
+    let file = concat!(env!("CARGO_MANIFEST_DIR"), "/../samples/timestamp.log");
+    let data = fs::read_to_string(file).unwrap();
+    let data = data.trim();
+    let ts = data.parse::<u64>().unwrap();
+    Ok(ts)
 }
 
 // create local session context with an in-memory table
@@ -109,8 +120,10 @@ fn create_table_by_file<P: AsRef<Path>>(ctx: &SessionContext, path: P) -> Result
         p if p.ends_with("histogram_count.json") => TYPE_COUNTER,
         p if p.ends_with("histogram_sum.json") => TYPE_COUNTER,
         p if p.ends_with("summary.json") => TYPE_SUMMARY,
+        p if p.ends_with("timestamp.log") => return Ok(()),
         _ => "",
     };
+
     let data = fs::read(path).unwrap();
     let resp: Response = serde_json::from_slice(&data).map_err(|e| {
         DataFusionError::Execution(format!("Failed to parse JSON file {}: {e}", path.display()))
@@ -190,7 +203,7 @@ fn create_record_batch(
                 .entry(FIELD_TYPE.to_string())
                 .or_default()
                 .push(metric_type.to_string());
-            time_field_values.push(sample.timestamp * 1_000_000);
+            time_field_values.push((sample.timestamp * 1_000_000.0) as i64);
             value_field_values.push(sample.value.parse::<f64>().unwrap());
         }
     }
@@ -237,6 +250,6 @@ struct TimeSeries {
 /// See https://docs.victoriametrics.com/keyConcepts.html#raw-samples
 #[derive(Debug, Serialize, Deserialize)]
 struct Sample {
-    timestamp: i64,
+    timestamp: f64,
     value: String,
 }

@@ -31,6 +31,8 @@ pub struct InstantValue {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RangeValue {
     pub metric: Metric,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub time: Option<(i64, i64)>,
     pub values: Vec<Sample>,
 }
 
@@ -47,8 +49,8 @@ pub enum Value {
     RangeValue(RangeValue),
     VectorValues(Vec<InstantValue>),
     MatrixValues(Vec<RangeValue>),
-    NumberLiteral(f64),
     ScalarValues(Vec<ScalarValue>),
+    NumberLiteral(f64),
     None,
 }
 
@@ -98,6 +100,17 @@ fn sig_without_labels(metric: &Metric, names: &[&str]) -> String {
     kv_pairs.join(",")
 }
 
+pub fn extrapolate_sample(p1: &Sample, p2: &Sample, t: i64) -> Sample {
+    let dt = p2.timestamp - p1.timestamp;
+    let dv = p2.value - p1.value;
+    let dt2 = t - p1.timestamp;
+    let dv2 = dv * dt2 as f64 / dt as f64;
+    Sample {
+        timestamp: t,
+        value: p1.value + dv2,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -121,5 +134,44 @@ mod tests {
             )
         "#]]
         .assert_debug_eq(&signature_without_labels(&metric, &["a", "c"]));
+    }
+
+    #[test]
+    fn test_extrapolate_sample() {
+        let p1 = Sample {
+            timestamp: 100,
+            value: 10.0,
+        };
+        let p2 = Sample {
+            timestamp: 200,
+            value: 20.0,
+        };
+        let p3 = extrapolate_sample(&p1, &p2, 300);
+        assert_eq!(p3.timestamp, 300);
+        assert_eq!(p3.value, 30.0);
+
+        let p1 = Sample {
+            timestamp: 225,
+            value: 1.0,
+        };
+        let p2 = Sample {
+            timestamp: 675,
+            value: 2.0,
+        };
+        let p3 = extrapolate_sample(&p1, &p2, 750);
+        let p4 = extrapolate_sample(&p1, &p2, 150);
+        assert_eq!(format!("{:.2}", p3.value - p4.value), "1.33");
+
+        let p1 = Sample {
+            timestamp: 375,
+            value: 1.0,
+        };
+        let p2 = Sample {
+            timestamp: 675,
+            value: 2.0,
+        };
+        let p3 = extrapolate_sample(&p1, &p2, 750);
+        let p4 = extrapolate_sample(&p1, &p2, 300);
+        assert_eq!(format!("{:.2}", p3.value - p4.value), "1.50");
     }
 }
