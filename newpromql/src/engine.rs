@@ -2,7 +2,7 @@ use async_recursion::async_recursion;
 use datafusion::{
     arrow::json as arrowJson,
     error::{DataFusionError, Result},
-    prelude::{col, lit, SessionContext},
+    prelude::{col, lit, min, SessionContext},
 };
 use promql_parser::parser::{
     token, AggModifier, AggregateExpr, Call, EvalStmt, Expr as PromExpr, Function, FunctionArgs,
@@ -29,7 +29,7 @@ pub struct QueryEngine {
     lookback_delta: i64,
     exec_i: i64,
     exec_max: i64,
-    data_cache: Arc<Value>,
+    data_cache: Arc<HashMap<String, Value>>,
 }
 
 impl QueryEngine {
@@ -44,7 +44,7 @@ impl QueryEngine {
             lookback_delta: five_min,
             exec_i: 0,
             exec_max: 1,
-            data_cache: Arc::new(Value::None),
+            data_cache: Arc::new(HashMap::new()),
         }
     }
 
@@ -120,14 +120,22 @@ impl QueryEngine {
             PromExpr::StringLiteral(_) => todo!(),
             PromExpr::VectorSelector(v) => {
                 let data = self.eval_vector_selector(v).await?;
-                Value::VectorValues(data)
+                if data.is_empty() {
+                    Value::None
+                } else {
+                    Value::VectorValues(data)
+                }
             }
             PromExpr::MatrixSelector(MatrixSelector {
                 vector_selector,
                 range,
             }) => {
                 let data = self.eval_matrix_selector(vector_selector, *range).await?;
-                Value::MatrixValues(data)
+                if data.is_empty() {
+                    Value::None
+                } else {
+                    Value::MatrixValues(data)
+                }
             }
             PromExpr::Call(Call { func, args }) => self.call_expr(func, args).await?,
         })
@@ -138,10 +146,17 @@ impl QueryEngine {
         &mut self,
         selector: &VectorSelector,
     ) -> Result<Vec<InstantValue>> {
-        if self.data_cache.is_none() {
+        let metrics_name = selector.name.as_ref().unwrap();
+        if !self.data_cache.contains_key(metrics_name) {
             self.selector_load_data(selector, None).await?;
         }
-        let cache_data = self.data_cache.get_ref_matrix_values().unwrap();
+        let cache_data = match self.data_cache.get(metrics_name) {
+            Some(v) => match v.get_ref_matrix_values() {
+                Some(v) => v,
+                None => return Ok(vec![]),
+            },
+            None => return Ok(vec![]),
+        };
 
         let mut values = vec![];
         for metric in cache_data {
@@ -169,10 +184,17 @@ impl QueryEngine {
         selector: &VectorSelector,
         range: Duration,
     ) -> Result<Vec<RangeValue>> {
-        if self.data_cache.is_none() {
+        let metrics_name = selector.name.as_ref().unwrap();
+        if !self.data_cache.contains_key(metrics_name) {
             self.selector_load_data(selector, Some(range)).await?;
         }
-        let cache_data = self.data_cache.get_ref_matrix_values().unwrap();
+        let cache_data = match self.data_cache.get(metrics_name) {
+            Some(v) => match v.get_ref_matrix_values() {
+                Some(v) => v,
+                None => return Ok(vec![]),
+            },
+            None => return Ok(vec![]),
+        };
 
         let end = self.start + (self.interval * self.exec_i); // 15s
         let start = end - micros(range); // 5m
@@ -207,6 +229,7 @@ impl QueryEngine {
         };
         let end = self.end; // 30 minutes + 5m = 35m
 
+        // 1. Group by metrics (sets of label name-value pairs)
         let mut df_group = table.clone().filter(
             col(FIELD_TIME)
                 .gt(lit(start))
@@ -215,17 +238,17 @@ impl QueryEngine {
         for mat in selector.matchers.matchers.iter() {
             df_group = df_group.filter(col(mat.name.clone()).eq(lit(mat.value.clone())))?;
         }
-        // 1. Group by metrics (sets of label name-value pairs)
-        let group_by = table
+        let group_select = table
             .schema()
             .fields()
             .iter()
             .map(datafusion::common::DFField::name)
-            .filter(|&field_name| field_name != FIELD_TIME && field_name != FIELD_VALUE)
-            .map(col)
+            .filter(|&field_name| {
+                field_name != FIELD_HASH && field_name != FIELD_TIME && field_name != FIELD_VALUE
+            })
+            .map(|v| min(col(v)).alias(v))
             .collect::<Vec<_>>();
-        // data set, the fewer comparison operations the aggregator has to make.
-        df_group = df_group.aggregate(group_by, vec![])?;
+        df_group = df_group.aggregate(vec![col(FIELD_HASH)], group_select)?;
         let group_data = df_group.collect().await?;
         let metrics = arrowJson::writer::record_batches_to_json_rows(&group_data)?
             .iter()
@@ -288,7 +311,13 @@ impl QueryEngine {
         }
 
         // cache data
-        self.data_cache = Arc::new(Value::MatrixValues(metric_values));
+        let values = if metric_values.is_empty() {
+            Value::None
+        } else {
+            Value::MatrixValues(metric_values)
+        };
+        let cache = Arc::get_mut(&mut self.data_cache).unwrap();
+        cache.insert(table_name.to_string(), values);
         Ok(())
     }
 
