@@ -1803,11 +1803,15 @@ dependencies = [
  "datafusion",
  "expect-test",
  "md5",
+ "once_cell",
  "promql-parser",
+ "regex",
+ "regex-syntax",
  "serde",
  "strum",
  "strum_macros",
  "time",
+ "tokio",
 ]
 
 [[package]]

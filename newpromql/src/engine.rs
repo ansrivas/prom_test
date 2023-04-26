@@ -4,9 +4,13 @@ use datafusion::{
     error::{DataFusionError, Result},
     prelude::{col, lit, min, SessionContext},
 };
-use promql_parser::parser::{
-    token, AggModifier, AggregateExpr, Call, EvalStmt, Expr as PromExpr, Function, FunctionArgs,
-    MatrixSelector, NumberLiteral, ParenExpr, TokenType, UnaryExpr, VectorSelector,
+use promql_parser::{
+    label::MatchOp,
+    parser::{
+        token, AggModifier, AggregateExpr, Call, EvalStmt, Expr as PromExpr, Function,
+        FunctionArgs, MatrixSelector, NumberLiteral, ParenExpr, TokenType, UnaryExpr,
+        VectorSelector,
+    },
 };
 use std::{
     collections::HashMap,
@@ -33,7 +37,11 @@ pub struct QueryEngine {
 }
 
 impl QueryEngine {
-    pub fn new(ctx: SessionContext) -> Self {
+    pub fn new(mut ctx: SessionContext) -> Self {
+        // register regexp match
+        super::datafusion::register_udf(&mut ctx);
+        let ctx = ctx;
+
         let now = micros_since_epoch(SystemTime::now());
         let five_min = micros(Duration::from_secs(300));
         Self {
@@ -235,8 +243,29 @@ impl QueryEngine {
                 .gt(lit(start))
                 .and(col(FIELD_TIME).lt_eq(lit(end))),
         )?;
+        let regexp_match_udf = super::datafusion::regexp_udf::REGEX_MATCH_UDF.clone();
+        let regexp_not_match_udf = super::datafusion::regexp_udf::REGEX_NOT_MATCH_UDF.clone();
         for mat in selector.matchers.matchers.iter() {
-            df_group = df_group.filter(col(mat.name.clone()).eq(lit(mat.value.clone())))?;
+            match &mat.op {
+                MatchOp::Equal => {
+                    df_group = df_group.filter(col(mat.name.clone()).eq(lit(mat.value.clone())))?
+                }
+                MatchOp::NotEqual => {
+                    df_group =
+                        df_group.filter(col(mat.name.clone()).not_eq(lit(mat.value.clone())))?
+                }
+                MatchOp::Re(_re) => {
+                    df_group = df_group.filter(
+                        regexp_match_udf.call(vec![col(mat.name.clone()), lit(mat.value.clone())]),
+                    )?
+                }
+                MatchOp::NotRe(_re) => {
+                    df_group = df_group.filter(
+                        regexp_not_match_udf
+                            .call(vec![col(mat.name.clone()), lit(mat.value.clone())]),
+                    )?
+                }
+            }
         }
         let group_select = table
             .schema()
@@ -266,7 +295,26 @@ impl QueryEngine {
                 .and(col(FIELD_TIME).lt_eq(lit(end))),
         )?;
         for mat in selector.matchers.matchers.iter() {
-            df_data = df_data.filter(col(mat.name.clone()).eq(lit(mat.value.clone())))?;
+            match &mat.op {
+                MatchOp::Equal => {
+                    df_data = df_data.filter(col(mat.name.clone()).eq(lit(mat.value.clone())))?
+                }
+                MatchOp::NotEqual => {
+                    df_data =
+                        df_data.filter(col(mat.name.clone()).not_eq(lit(mat.value.clone())))?
+                }
+                MatchOp::Re(_re) => {
+                    df_data = df_data.filter(
+                        regexp_match_udf.call(vec![col(mat.name.clone()), lit(mat.value.clone())]),
+                    )?
+                }
+                MatchOp::NotRe(_re) => {
+                    df_data = df_data.filter(
+                        regexp_not_match_udf
+                            .call(vec![col(mat.name.clone()), lit(mat.value.clone())]),
+                    )?
+                }
+            }
         }
         df_data = df_data.select(vec![col(FIELD_HASH), col(FIELD_TIME), col(FIELD_VALUE)])?;
         let metric_data = df_data.collect().await?;
