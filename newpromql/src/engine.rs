@@ -294,7 +294,7 @@ impl QueryEngine {
 
         // Fix data about app restart
         for metric in metric_values.iter_mut() {
-            if metric.metric.get(FIELD_TYPE).unwrap().as_str() != "counter" {
+            if metric.metric.get(FIELD_TYPE).unwrap().as_str() != TYPE_COUNTER {
                 continue;
             }
             let mut delta: f64 = 0.0;
@@ -382,7 +382,7 @@ impl QueryEngine {
             Func::DayOfWeek => todo!(),
             Func::DayOfYear => todo!(),
             Func::DaysInMonth => todo!(),
-            Func::Delta => todo!(),
+            Func::Delta => functions::delta(sample_time, &input)?,
             Func::Deriv => todo!(),
             Func::Exp => todo!(),
             Func::Floor => todo!(),
@@ -413,8 +413,8 @@ impl QueryEngine {
             Func::HistogramSum => todo!(),
             Func::HoltWinters => todo!(),
             Func::Hour => todo!(),
-            Func::Idelta => todo!(),
-            Func::Increase => todo!(),
+            Func::Idelta => functions::idelta(sample_time, &input)?,
+            Func::Increase => functions::increase(sample_time, &input)?,
             Func::Irate => functions::irate(sample_time, &input)?,
             Func::LabelJoin => todo!(),
             Func::LabelReplace => todo!(),

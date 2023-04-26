@@ -4,7 +4,10 @@ use crate::value::{InstantValue, Sample, Value};
 
 mod avg_over_time;
 mod count_over_time;
+mod delta;
 mod histogram;
+mod idelta;
+mod increase;
 mod irate;
 mod max_over_time;
 mod min_over_time;
@@ -13,7 +16,10 @@ mod sum_over_time;
 
 pub(crate) use avg_over_time::avg_over_time;
 pub(crate) use count_over_time::count_over_time;
+pub(crate) use delta::delta;
 pub(crate) use histogram::histogram_quantile;
+pub(crate) use idelta::idelta;
+pub(crate) use increase::increase;
 pub(crate) use irate::irate;
 pub(crate) use max_over_time::max_over_time;
 pub(crate) use min_over_time::min_over_time;
