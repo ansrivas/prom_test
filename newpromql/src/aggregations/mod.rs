@@ -3,7 +3,7 @@ use promql_parser::parser::AggModifier;
 use promql_parser::parser::Expr as PromExpr;
 use std::collections::HashMap;
 
-use crate::value::{signature, Value};
+use crate::value::{signature, Signature, Value};
 use crate::QueryEngine;
 
 mod avg;
@@ -39,7 +39,7 @@ pub(crate) fn eval_arithmetic(
     data: &Value,
     f_name: &str,
     f_handler: fn(total: f64, val: f64) -> f64,
-) -> Result<Option<HashMap<String, ArithmeticItem>>> {
+) -> Result<Option<HashMap<Signature, ArithmeticItem>>> {
     let data = match data {
         Value::VectorValues(v) => v,
         Value::None => return Ok(None),
@@ -91,7 +91,7 @@ pub(crate) fn eval_arithmetic(
         None => {
             for item in data.iter() {
                 let entry = score_values
-                    .entry("".to_string())
+                    .entry(Signature::default())
                     .or_insert(ArithmeticItem {
                         labels: HashMap::new(),
                         value: 0.0,

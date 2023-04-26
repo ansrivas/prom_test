@@ -2,8 +2,8 @@ use datafusion::error::Result;
 
 use crate::value::{Sample, Value};
 
-pub(crate) fn irate(timestamp: i64, data: &Value) -> Result<Value> {
-    super::eval_idelta(timestamp, data, "irate", exec)
+pub(crate) fn idelta(timestamp: i64, data: &Value) -> Result<Value> {
+    super::eval_idelta(timestamp, data, "idelta", exec)
 }
 
 fn exec(data: &[Sample]) -> f64 {
@@ -15,9 +15,5 @@ fn exec(data: &[Sample]) -> f64 {
         Some(v) => v,
         None => return 0.0,
     };
-    let dt_seconds = (last.timestamp - previous.timestamp) / 1_000_000;
-    if dt_seconds == 0 {
-        return 0.0;
-    }
-    (last.value - previous.value) / dt_seconds as f64
+    last.value - previous.value
 }

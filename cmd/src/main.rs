@@ -1,11 +1,3 @@
-use std::{
-    collections::{HashMap, HashSet},
-    fs,
-    path::Path,
-    sync::Arc,
-    time::{Duration, UNIX_EPOCH},
-};
-
 use arrow_array::{ArrayRef, Float64Array};
 use clap::Parser;
 use datafusion::{
@@ -18,9 +10,17 @@ use datafusion::{
     error::{DataFusionError, Result},
     prelude::SessionContext,
 };
-use newpromql::value::{self, FIELD_HASH, FIELD_TIME, FIELD_TYPE, FIELD_VALUE};
 use promql_parser::parser;
 use serde::{Deserialize, Serialize};
+use std::{
+    collections::{HashMap, HashSet},
+    fs,
+    path::Path,
+    sync::Arc,
+    time::{Duration, UNIX_EPOCH},
+};
+
+use newpromql::value::*;
 
 mod api;
 mod http;
@@ -103,12 +103,12 @@ fn create_context() -> Result<SessionContext> {
 fn create_table_by_file<P: AsRef<Path>>(ctx: &SessionContext, path: P) -> Result<()> {
     let path = path.as_ref();
     let metric_type = match path {
-        p if p.ends_with("counter.json") => "counter",
-        p if p.ends_with("gauge.json") => "gauge",
-        p if p.ends_with("histogram_bucket.json") => "histogram",
-        p if p.ends_with("histogram_count.json") => "counter",
-        p if p.ends_with("histogram_sum.json") => "counter",
-        p if p.ends_with("summary.json") => "summary",
+        p if p.ends_with("counter.json") => TYPE_COUNTER,
+        p if p.ends_with("gauge.json") => TYPE_GAUGE,
+        p if p.ends_with("histogram_bucket.json") => TYPE_HISTOGRAM,
+        p if p.ends_with("histogram_count.json") => TYPE_COUNTER,
+        p if p.ends_with("histogram_sum.json") => TYPE_COUNTER,
+        p if p.ends_with("summary.json") => TYPE_SUMMARY,
         _ => "",
     };
     let data = fs::read(path).unwrap();
@@ -160,7 +160,8 @@ fn create_record_batch(
         time_series.metric.iter().for_each(|(k, v)| {
             field_map.insert(k.to_string(), v.to_string());
         });
-        let hash_value = value::signature(&field_map);
+        let hash_value = signature(&field_map);
+        let hash_value = hash_value.as_str();
 
         for sample in &time_series.values {
             for field in schema.fields() {
@@ -184,7 +185,7 @@ fn create_record_batch(
             field_values
                 .entry(FIELD_HASH.to_string())
                 .or_default()
-                .push(hash_value.clone());
+                .push(hash_value.to_string());
             field_values
                 .entry(FIELD_TYPE.to_string())
                 .or_default()

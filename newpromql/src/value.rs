@@ -8,6 +8,11 @@ pub const FIELD_TIME: &str = "_timestamp";
 pub const FIELD_VALUE: &str = "value";
 pub const FIELD_BUCKET: &str = "le";
 
+pub const TYPE_COUNTER: &str = "counter";
+pub const TYPE_GAUGE: &str = "gauge";
+pub const TYPE_HISTOGRAM: &str = "histogram";
+pub const TYPE_SUMMARY: &str = "summary";
+
 pub type Metric = HashMap<String, String>;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -60,17 +65,21 @@ impl Value {
     }
 }
 
-pub fn signature(data: &Metric) -> String {
-    let mut strs = data
-        .iter()
-        .map(|(k, v)| format!("{}={}", k, v))
-        .collect::<Vec<_>>();
-    strs.sort();
-    format!("{:x}", md5::compute(strs.join(",")))
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Signature(String);
+
+impl Signature {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct Signature(String);
+pub fn signature(metric: &Metric) -> Signature {
+    Signature(format!(
+        "{:x}",
+        md5::compute(sig_without_labels(metric, &[]))
+    ))
+}
 
 // `signature_without_labels` is just as [`signature`], but only for labels not matching `names`.
 pub fn signature_without_labels(metric: &Metric, names: &[&str]) -> Signature {
