@@ -71,7 +71,8 @@ impl QueryEngine {
 
         // range query
         let mut instant_vectors = Vec::new();
-        for i in 0..((self.end - self.start) / self.interval) + 1 {
+        let nr_intervals = ((self.end - self.start) / self.interval) + 1;
+        for i in 0..nr_intervals {
             self.exec_i = i;
             if let Value::VectorValues(in_vec) = self.exec_expr(&stmt.expr).await? {
                 instant_vectors.push(in_vec);
@@ -94,6 +95,7 @@ impl QueryEngine {
             .into_iter()
             .map(|(metric, values)| RangeValue {
                 metric: merged_metrics.get(&metric).unwrap().to_owned(),
+                time: None,
                 values,
             })
             .collect::<Vec<_>>();
@@ -213,6 +215,7 @@ impl QueryEngine {
                 .collect::<Vec<_>>();
             values.push(RangeValue {
                 metric: metric.metric.clone(),
+                time: Some((start, end)),
                 values: metric_data,
             });
         }
@@ -332,6 +335,7 @@ impl QueryEngine {
             let metric_data = metric_data_group.get(hash_value).unwrap();
             metric_values.push(RangeValue {
                 metric,
+                time: None,
                 values: metric_data.clone(),
             });
         }
@@ -400,8 +404,6 @@ impl QueryEngine {
     async fn call_expr(&mut self, func: &Function, args: &FunctionArgs) -> Result<Value> {
         use crate::functions::Func;
 
-        let sample_time = self.start + (self.interval * self.exec_i);
-
         let func_name = Func::from_str(func.name).map_err(|_| {
             DataFusionError::Internal(format!("Unsupported function: {}", func.name))
         })?;
@@ -415,18 +417,18 @@ impl QueryEngine {
             Func::Abs => todo!(),
             Func::Absent => todo!(),
             Func::AbsentOverTime => todo!(),
-            Func::AvgOverTime => functions::avg_over_time(sample_time, &input)?,
+            Func::AvgOverTime => functions::avg_over_time(&input)?,
             Func::Ceil => todo!(),
             Func::Changes => todo!(),
             Func::Clamp => todo!(),
             Func::ClampMax => todo!(),
             Func::ClampMin => todo!(),
-            Func::CountOverTime => functions::count_over_time(sample_time, &input)?,
+            Func::CountOverTime => functions::count_over_time(&input)?,
             Func::DayOfMonth => todo!(),
             Func::DayOfWeek => todo!(),
             Func::DayOfYear => todo!(),
             Func::DaysInMonth => todo!(),
-            Func::Delta => functions::delta(sample_time, &input)?,
+            Func::Delta => functions::delta(&input)?,
             Func::Deriv => todo!(),
             Func::Exp => todo!(),
             Func::Floor => todo!(),
@@ -457,28 +459,28 @@ impl QueryEngine {
             Func::HistogramSum => todo!(),
             Func::HoltWinters => todo!(),
             Func::Hour => todo!(),
-            Func::Idelta => functions::idelta(sample_time, &input)?,
-            Func::Increase => functions::increase(sample_time, &input)?,
-            Func::Irate => functions::irate(sample_time, &input)?,
+            Func::Idelta => functions::idelta(&input)?,
+            Func::Increase => functions::increase(&input)?,
+            Func::Irate => functions::irate(&input)?,
             Func::LabelJoin => todo!(),
             Func::LabelReplace => todo!(),
             Func::Ln => todo!(),
             Func::Log10 => todo!(),
             Func::Log2 => todo!(),
-            Func::MaxOverTime => functions::max_over_time(sample_time, &input)?,
-            Func::MinOverTime => functions::min_over_time(sample_time, &input)?,
+            Func::MaxOverTime => functions::max_over_time(&input)?,
+            Func::MinOverTime => functions::min_over_time(&input)?,
             Func::Minute => todo!(),
             Func::Month => todo!(),
             Func::PredictLinear => todo!(),
             Func::QuantileOverTime => todo!(),
-            Func::Rate => functions::rate(sample_time, &input)?,
+            Func::Rate => functions::rate(&input)?,
             Func::Resets => todo!(),
             Func::Round => todo!(),
             Func::Scalar => todo!(),
             Func::Sgn => todo!(),
             Func::Sort => todo!(),
             Func::SortDesc => todo!(),
-            Func::SumOverTime => functions::sum_over_time(sample_time, &input)?,
+            Func::SumOverTime => functions::sum_over_time(&input)?,
             Func::Time => todo!(),
             Func::Timestamp => todo!(),
             Func::Vector => todo!(),

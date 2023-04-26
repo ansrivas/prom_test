@@ -1,11 +1,14 @@
 use datafusion::error::Result;
 
-use crate::value::{Sample, Value};
+use crate::value::{RangeValue, Value};
 
-pub(crate) fn avg_over_time(timestamp: i64, data: &Value) -> Result<Value> {
-    super::eval_idelta(timestamp, data, "avg_over_time", exec)
+pub(crate) fn avg_over_time(data: &Value) -> Result<Value> {
+    super::eval_idelta(data, "avg_over_time", exec)
 }
 
-fn exec(data: &[Sample]) -> f64 {
-    data.iter().map(|s| s.value).sum::<f64>() / data.len() as f64
+fn exec(data: &RangeValue) -> f64 {
+    if data.values.is_empty() {
+        return 0.0;
+    }
+    data.values.iter().map(|s| s.value).sum::<f64>() / data.values.len() as f64
 }

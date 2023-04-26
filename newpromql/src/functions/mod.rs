@@ -1,6 +1,6 @@
 use datafusion::error::{DataFusionError, Result};
 
-use crate::value::{InstantValue, Sample, Value};
+use crate::value::{InstantValue, RangeValue, Sample, Value};
 
 mod avg_over_time;
 mod count_over_time;
@@ -85,10 +85,9 @@ pub(crate) enum Func {
 }
 
 pub(crate) fn eval_idelta(
-    timestamp: i64,
     data: &Value,
     fn_name: &str,
-    fn_handler: fn(&[Sample]) -> f64,
+    fn_handler: fn(&RangeValue) -> f64,
 ) -> Result<Value> {
     let data = match data {
         Value::MatrixValues(v) => v,
@@ -103,10 +102,13 @@ pub(crate) fn eval_idelta(
     let rate_values = data
         .iter()
         .map(|metric| {
-            let value = fn_handler(&metric.values);
+            let value = fn_handler(metric);
             InstantValue {
                 metric: metric.metric.clone(),
-                value: Sample { timestamp, value },
+                value: Sample {
+                    timestamp: metric.time.unwrap().1,
+                    value,
+                },
             }
         })
         .collect();
