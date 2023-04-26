@@ -10,10 +10,10 @@ fn exec(data: &[Sample]) -> f64 {
     if data.len() <= 1 {
         return 0.0;
     }
-    let (end_value, data) = data.split_last().unwrap();
-    let previous_value = match data.last() {
+    let (last, data) = data.split_last().unwrap();
+    let previous = match data.last() {
         Some(v) => v,
         None => return 0.0,
     };
-    end_value.value - previous_value.value
+    last.value - previous.value
 }
