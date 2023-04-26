@@ -34,30 +34,19 @@ pub async fn query(req: Query<QueryRequest>) -> Json<Value> {
 
     let prom_expr = parser::parse(&req.query).unwrap();
 
-    let mut start = match req.start {
-        Some(v) => UNIX_EPOCH
-            .checked_add(Duration::from_secs(v as u64))
-            .unwrap(),
-        None => SystemTime::now(),
+    let mk_time = |t| {
+        UNIX_EPOCH
+            .checked_add(Duration::from_secs(t as u64))
+            .unwrap()
     };
-    if req.time.is_some() {
-        start = match req.time {
-            Some(v) => UNIX_EPOCH
-                .checked_add(Duration::from_secs(v as u64))
-                .unwrap(),
-            None => SystemTime::now(),
-        };
-    }
-    let end = match req.end {
-        Some(v) => UNIX_EPOCH
-            .checked_add(Duration::from_secs(v as u64))
-            .unwrap(),
-        None => start,
+    let start = if let Some(t) = req.time {
+        mk_time(t)
+    } else {
+        req.start.map_or_else(SystemTime::now, mk_time)
     };
-    let interval = match req.step {
-        Some(v) => Duration::from_secs(v as u64),
-        None => Duration::from_secs(300),
-    };
+    let end = req.end.map_or(start, mk_time);
+    let interval = Duration::from_secs(req.step.map_or(300, |t| t as u64));
+
     let eval_stmt = parser::EvalStmt {
         expr: prom_expr,
         start,
