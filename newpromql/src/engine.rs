@@ -32,7 +32,6 @@ pub struct QueryEngine {
     /// Default look back from sample search.
     lookback_delta: i64,
     exec_i: i64,
-    exec_max: i64,
     data_cache: Arc<HashMap<String, Value>>,
 }
 
@@ -51,7 +50,6 @@ impl QueryEngine {
             interval: five_min,
             lookback_delta: five_min,
             exec_i: 0,
-            exec_max: 1,
             data_cache: Arc::new(HashMap::new()),
         }
     }
@@ -72,21 +70,19 @@ impl QueryEngine {
         }
 
         // range query
-        let mut datas = Vec::new();
-        self.exec_i = 0;
-        self.exec_max = ((self.end - self.start) / self.interval) + 1;
-        while self.exec_i < self.exec_max {
-            if let Value::VectorValues(data) = self.exec_expr(&stmt.expr).await? {
-                datas.push(data);
+        let mut instant_vectors = Vec::new();
+        for i in 0..((self.end - self.start) / self.interval) + 1 {
+            self.exec_i = i;
+            if let Value::VectorValues(in_vec) = self.exec_expr(&stmt.expr).await? {
+                instant_vectors.push(in_vec);
             }
-            self.exec_i += 1;
         }
 
         // merge data
         let mut merged_data = HashMap::new();
         let mut merged_metrics = HashMap::new();
-        for data in datas {
-            for value in data {
+        for ivec in instant_vectors {
+            for value in ivec {
                 let entry = merged_data
                     .entry(signature(&value.metric))
                     .or_insert_with(Vec::new);
