@@ -71,8 +71,8 @@ impl QueryEngine {
 
         // range query
         let mut instant_vectors = Vec::new();
-        let nums = ((self.end - self.start) / self.interval) + 1;
-        for i in 0..nums {
+        let nr_intervals = ((self.end - self.start) / self.interval) + 1;
+        for i in 0..nr_intervals {
             self.exec_i = i;
             if let Value::VectorValues(in_vec) = self.exec_expr(&stmt.expr).await? {
                 instant_vectors.push(in_vec);

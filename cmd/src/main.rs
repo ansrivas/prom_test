@@ -56,7 +56,11 @@ async fn main() {
     // read data updated timestamp
     let data_end = get_updated_timestamp().unwrap();
     let data_start = data_end - 1800;
-    tracing::info!("loading data with time: {} - {}", data_start, data_end);
+    tracing::info!(
+        "loading data within time interval [{}..{}]",
+        data_start,
+        data_end
+    );
 
     if cli.server {
         tracing::info!("start http server: {}", start_time.elapsed());
@@ -97,8 +101,7 @@ fn get_updated_timestamp() -> Result<u64> {
     let file = concat!(env!("CARGO_MANIFEST_DIR"), "/../samples/timestamp.log");
     let data = fs::read_to_string(file).unwrap();
     let data = data.trim();
-    let ts = data.parse::<u64>().unwrap();
-    Ok(ts)
+    Ok(data.parse::<u64>().unwrap())
 }
 
 // create local session context with an in-memory table
