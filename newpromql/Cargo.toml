@@ -13,3 +13,6 @@ serde.workspace = true
 strum = { version = "0.24", features = ["derive"] }
 strum_macros = "0.24"
 time.workspace = true
+
+[dev-dependencies]
+expect-test = "1.4"
