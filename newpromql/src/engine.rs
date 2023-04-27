@@ -83,29 +83,8 @@ impl QueryEngine {
             self.time_window_idx = i;
             let ivec = match self.exec_expr(&stmt.expr).await? {
                 Value::Vector(ivec) => ivec,
-                Value::Scalars(xs) => xs
-                    .into_iter()
-                    .map(|ScalarValue { metric, value }| InstantValue {
-                        metric,
-                        value: Sample {
-                            timestamp: self.end,
-                            value,
-                        },
-                    })
-                    .collect(),
-                // XXX-HACK:
-                //
-                // * An instant query can return any valid PromQL expression
-                //   type (string, scalar, instant and range vectors). [1]
-                //   We may have to support them eventually.
-                //
-                // [1]: https://promlabs.com/blog/2020/06/18/the-anatomy-of-a-promql-query/#instant-queries
-                //
-                // * Currently `crate::value` module is a hotchpotch of
-                //   internal data structures (e.g. `value::RangeValue`) and
-                //   user-facing data structures (instant vector, range
-                //   vector). Such a mixture is difficult to work with.
-                Value::Instant(_)
+                Value::Scalars(_)
+                | Value::Instant(_)
                 | Value::Range(_)
                 | Value::Matrix(_)
                 | Value::Float(_)
@@ -490,7 +469,8 @@ impl QueryEngine {
                         }
                     }
                 };
-                functions::histogram_quantile(phi, input)?
+                let sample_time = self.start + (self.interval * self.time_window_idx);
+                functions::histogram_quantile(sample_time, phi, input)?
             }
             Func::HistogramSum => todo!(),
             Func::HoltWinters => todo!(),

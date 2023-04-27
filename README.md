@@ -8,6 +8,12 @@ Test implement PromQL parse with Datafusion.
 ./update-samples.sh
 ```
 
+## sample query
+
+```
+histogram_quantile(0.9, sum by (le, exported_endpoint) (rate(zo_http_response_time_bucket{namespace="ziox-alpha1",organization="default",exported_endpoint=~".*_json"}[5m])))
+```
+
 ## sample data URLs
 
 ```
