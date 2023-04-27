@@ -21,7 +21,7 @@ struct MetricWithBuckets {
 /// TODO: support native histograms; see [`histogramQuantile`]
 ///
 /// [`histogramQuantile`]: https://github.com/prometheus/prometheus/blob/f7c6130ff27a2a12412c02cce223f7a8abc59e49/promql/quantile.go#L146
-pub(crate) fn histogram_quantile(phi: f64, data: Value) -> Result<Value> {
+pub(crate) fn histogram_quantile(sample_time: i64, phi: f64, data: Value) -> Result<Value> {
     let in_vec = match data {
         Value::Vector(v) => v,
         _ => {
@@ -70,13 +70,16 @@ pub(crate) fn histogram_quantile(phi: f64, data: Value) -> Result<Value> {
 
     let values = metrics_with_buckets
         .into_values()
-        .map(|mb| value::ScalarValue {
+        .map(|mb| value::InstantValue {
             metric: mb.metric,
-            value: bucket_quantile(phi, mb.buckets),
+            value: value::Sample {
+                timestamp: sample_time,
+                value: bucket_quantile(phi, mb.buckets),
+            },
         })
         .collect();
 
-    Ok(Value::Scalars(values))
+    Ok(Value::Vector(values))
 }
 
 // cf. https://github.com/prometheus/prometheus/blob/cf1bea344a3c390a90c35ea8764c4a468b345d5e/promql/quantile.go#L76

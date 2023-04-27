@@ -1,3 +1,4 @@
+use serde::ser::{SerializeSeq, Serializer};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -15,20 +16,32 @@ pub const TYPE_SUMMARY: &str = "summary";
 
 pub type Metric = HashMap<String, String>;
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy)]
 pub struct Sample {
     /// Time in microseconds
     pub timestamp: i64,
     pub value: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+impl Serialize for Sample {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut seq = serializer.serialize_seq(Some(2))?;
+        seq.serialize_element(&(self.timestamp / 1_000_000))?;
+        seq.serialize_element(&self.value.to_string())?;
+        seq.end()
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct InstantValue {
     pub metric: Metric,
     pub value: Sample,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RangeValue {
     pub metric: Metric,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -70,20 +83,14 @@ impl RangeValue {
     }
 }
 
-/// A simple numeric floating point value.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ScalarValue {
-    pub metric: Metric,
-    pub value: f64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
+#[serde(untagged)]
 pub enum Value {
     Instant(InstantValue),
     Range(RangeValue),
     Vector(Vec<InstantValue>),
     Matrix(Vec<RangeValue>),
-    Scalars(Vec<ScalarValue>),
+    Sample(Sample), // only used for return literal value
     Float(f64),
     None,
 }
@@ -93,6 +100,17 @@ impl Value {
         match self {
             Value::Matrix(values) => Some(values),
             _ => None,
+        }
+    }
+    pub fn get_type(&self) -> &str {
+        match self {
+            Value::Instant(_) => "vector",
+            Value::Range(_) => "matrix",
+            Value::Vector(_) => "vector",
+            Value::Matrix(_) => "matrix",
+            Value::Sample(_) => "scalar",
+            Value::Float(_) => "scalar",
+            Value::None => "scalar",
         }
     }
 }

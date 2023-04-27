@@ -17,9 +17,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use promql_parser::parser;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize)]
 pub struct QueryRequest {
     pub query: String,
     pub time: Option<i64>,
@@ -29,7 +28,25 @@ pub struct QueryRequest {
     pub timeout: Option<i64>,
 }
 
-pub async fn query(req: Query<QueryRequest>) -> Json<Value> {
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueryResult {
+    pub result_type: String, // vector, matrix, scalar, string
+    pub result: newpromql::value::Value,
+}
+
+#[derive(Serialize)]
+pub struct QueryResponse {
+    pub status: String, // success, error
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<QueryResult>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+pub async fn query(req: Query<QueryRequest>) -> Json<QueryResponse> {
     let start_time = time::Instant::now();
 
     let prom_expr = parser::parse(&req.query).unwrap();
@@ -59,8 +76,24 @@ pub async fn query(req: Query<QueryRequest>) -> Json<Value> {
     tracing::info!("prepare time: {}", start_time.elapsed());
 
     let mut engine = newpromql::QueryEngine::new(ctx);
-    let data = engine.exec(eval_stmt).await.unwrap();
+    let response = match engine.exec(eval_stmt).await {
+        Ok(data) => QueryResponse {
+            status: "success".to_string(),
+            data: Some(QueryResult {
+                result_type: data.get_type().to_string(),
+                result: data,
+            }),
+            error_type: None,
+            error: None,
+        },
+        Err(e) => QueryResponse {
+            status: "error".to_string(),
+            data: None,
+            error_type: Some("bad_data".to_string()),
+            error: Some(e.to_string()),
+        },
+    };
     tracing::info!("execute time: {}", start_time.elapsed());
 
-    Json(json!(data))
+    Json(response)
 }

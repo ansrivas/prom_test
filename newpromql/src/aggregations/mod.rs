@@ -135,6 +135,9 @@ pub async fn eval_top(
 
     let mut score_values = Vec::new();
     for (i, item) in data.iter().enumerate() {
+        if item.value.value.is_nan() {
+            continue;
+        }
         score_values.push(TopItem {
             index: i,
             value: item.value.value,

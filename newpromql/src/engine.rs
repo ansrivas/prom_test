@@ -69,62 +69,73 @@ impl QueryEngine {
 
         if self.start == self.end {
             // Instant query
-            return self.exec_expr(&stmt.expr).await;
+            let mut value = self.exec_expr(&stmt.expr).await?;
+            if let Value::Float(v) = value {
+                value = Value::Sample(Sample {
+                    timestamp: self.end,
+                    value: v,
+                });
+            }
+            return Ok(value);
         }
 
         // Range query
-        let mut instant_vectors = Vec::new();
-        // The number of time windows in this range query, i.e. the number of instant
-        // queries to execute.
-        //
         // See https://promlabs.com/blog/2020/06/18/the-anatomy-of-a-promql-query/#range-queries
+        let mut instant_vectors = Vec::new();
         let nr_steps = ((self.end - self.start) / self.interval) + 1;
         for i in 0..nr_steps {
             self.time_window_idx = i;
-            let ivec = match self.exec_expr(&stmt.expr).await? {
-                Value::Vector(ivec) => ivec,
-                Value::Scalars(xs) => xs
-                    .into_iter()
-                    .map(|ScalarValue { metric, value }| InstantValue {
-                        metric,
-                        value: Sample {
-                            timestamp: self.end,
-                            value,
-                        },
+            match self.exec_expr(&stmt.expr).await? {
+                Value::Instant(v) => instant_vectors.push(RangeValue {
+                    metric: v.metric.to_owned(),
+                    time: None,
+                    values: vec![v.value],
+                }),
+                Value::Vector(v) => v.iter().for_each(|item| {
+                    instant_vectors.push(RangeValue {
+                        metric: item.metric.to_owned(),
+                        time: None,
+                        values: vec![item.value],
                     })
-                    .collect(),
-                // XXX-HACK:
-                //
-                // * An instant query can return any valid PromQL expression
-                //   type (string, scalar, instant and range vectors). [1]
-                //   We may have to support them eventually.
-                //
-                // [1]: https://promlabs.com/blog/2020/06/18/the-anatomy-of-a-promql-query/#instant-queries
-                //
-                // * Currently `crate::value` module is a hotchpotch of
-                //   internal data structures (e.g. `value::RangeValue`) and
-                //   user-facing data structures (instant vector, range
-                //   vector). Such a mixture is difficult to work with.
-                Value::Instant(_)
-                | Value::Range(_)
-                | Value::Matrix(_)
-                | Value::Float(_)
-                | Value::None => unimplemented!("range query: unsupported value type"),
+                }),
+                Value::Range(v) => instant_vectors.push(v),
+                Value::Matrix(v) => v
+                    .iter()
+                    .for_each(|item| instant_vectors.push(item.to_owned())),
+                Value::Sample(v) => instant_vectors.push(RangeValue {
+                    metric: HashMap::new(),
+                    time: None,
+                    values: vec![v],
+                }),
+                Value::Float(v) => instant_vectors.push(RangeValue {
+                    metric: HashMap::new(),
+                    time: None,
+                    values: vec![Sample {
+                        timestamp: self.start + (self.interval * self.time_window_idx),
+                        value: v,
+                    }],
+                }),
+                Value::None => continue,
             };
-            instant_vectors.push(ivec);
+        }
+
+        // empty result quick return
+        if instant_vectors.is_empty() {
+            return Ok(Value::None);
         }
 
         // merge data
         let mut merged_data = HashMap::new();
         let mut merged_metrics = HashMap::new();
-        for ivec in instant_vectors {
-            for value in ivec {
-                let entry = merged_data
-                    .entry(signature(&value.metric))
-                    .or_insert_with(Vec::new);
-                entry.push(value.value);
-                merged_metrics.insert(signature(&value.metric), value.metric);
-            }
+        for value in instant_vectors {
+            let entry = merged_data
+                .entry(signature(&value.metric))
+                .or_insert_with(Vec::new);
+            value
+                .values
+                .iter()
+                .for_each(|item| entry.push(item.to_owned()));
+            merged_metrics.insert(signature(&value.metric), value.metric);
         }
         let merged_data = merged_data
             .into_iter()
@@ -490,7 +501,8 @@ impl QueryEngine {
                         }
                     }
                 };
-                functions::histogram_quantile(phi, input)?
+                let sample_time = self.start + (self.interval * self.time_window_idx);
+                functions::histogram_quantile(sample_time, phi, input)?
             }
             Func::HistogramSum => todo!(),
             Func::HoltWinters => todo!(),
