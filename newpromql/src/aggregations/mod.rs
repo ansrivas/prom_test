@@ -1,6 +1,6 @@
 use datafusion::error::{DataFusionError, Result};
-use promql_parser::parser::AggModifier;
 use promql_parser::parser::Expr as PromExpr;
+use promql_parser::parser::LabelModifier;
 use std::collections::HashMap;
 
 use crate::value::{signature, Signature, Value};
@@ -35,7 +35,7 @@ pub(crate) struct TopItem {
 }
 
 pub(crate) fn eval_arithmetic(
-    param: &Option<AggModifier>,
+    param: &Option<LabelModifier>,
     data: &Value,
     f_name: &str,
     f_handler: fn(total: f64, val: f64) -> f64,
@@ -53,7 +53,7 @@ pub(crate) fn eval_arithmetic(
     let mut score_values = HashMap::new();
     match param {
         Some(v) => match v {
-            AggModifier::By(labels) => {
+            LabelModifier::Include(labels) => {
                 for item in data.iter() {
                     let mut sum_labels = HashMap::new();
                     for label in labels {
@@ -69,7 +69,7 @@ pub(crate) fn eval_arithmetic(
                     entry.num += 1;
                 }
             }
-            AggModifier::Without(labels) => {
+            LabelModifier::Exclude(labels) => {
                 for item in data.iter() {
                     let mut sum_labels = HashMap::new();
                     for (label, value) in item.metric.iter() {

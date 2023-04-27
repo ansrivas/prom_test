@@ -7,8 +7,8 @@ use datafusion::{
 use promql_parser::{
     label::MatchOp,
     parser::{
-        token, AggModifier, AggregateExpr, Call, EvalStmt, Expr as PromExpr, Function,
-        FunctionArgs, MatrixSelector, NumberLiteral, ParenExpr, TokenType, UnaryExpr,
+        token, AggregateExpr, Call, EvalStmt, Expr as PromExpr, Function, FunctionArgs,
+        LabelModifier, MatrixSelector, NumberLiteral, ParenExpr, TokenType, UnaryExpr,
         VectorSelector,
     },
 };
@@ -198,6 +198,7 @@ impl QueryEngine {
                 }
             }
             PromExpr::Call(Call { func, args }) => self.call_expr(func, args).await?,
+            PromExpr::Extension(_) => todo!(),
         })
     }
 
@@ -429,7 +430,7 @@ impl QueryEngine {
         op: &TokenType,
         expr: &PromExpr,
         param: &Option<Box<PromExpr>>,
-        modifier: &Option<AggModifier>,
+        modifier: &Option<LabelModifier>,
     ) -> Result<Value> {
         let sample_time = self.start + (self.interval * self.time_window_idx);
         let input = self.exec_expr(expr).await?;
