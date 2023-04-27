@@ -90,7 +90,7 @@ pub(crate) fn eval_idelta(
     fn_handler: fn(&RangeValue) -> f64,
 ) -> Result<Value> {
     let data = match data {
-        Value::MatrixValues(v) => v,
+        Value::Matrix(v) => v,
         Value::None => return Ok(Value::None),
         _ => {
             return Err(DataFusionError::Internal(format!(
@@ -112,5 +112,5 @@ pub(crate) fn eval_idelta(
             }
         })
         .collect();
-    Ok(Value::VectorValues(rate_values))
+    Ok(Value::Vector(rate_values))
 }

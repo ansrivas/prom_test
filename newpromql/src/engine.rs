@@ -82,8 +82,8 @@ impl QueryEngine {
         for i in 0..nr_steps {
             self.time_window_idx = i;
             let ivec = match self.exec_expr(&stmt.expr).await? {
-                Value::VectorValues(ivec) => ivec,
-                Value::ScalarValues(xs) => xs
+                Value::Vector(ivec) => ivec,
+                Value::Scalars(xs) => xs
                     .into_iter()
                     .map(|ScalarValue { metric, value }| InstantValue {
                         metric,
@@ -105,10 +105,10 @@ impl QueryEngine {
                 //   internal data structures (e.g. `value::RangeValue`) and
                 //   user-facing data structures (instant vector, range
                 //   vector). Such a mixture is difficult to work with.
-                Value::InstantValue(_)
-                | Value::RangeValue(_)
-                | Value::MatrixValues(_)
-                | Value::NumberLiteral(_)
+                Value::Instant(_)
+                | Value::Range(_)
+                | Value::Matrix(_)
+                | Value::Float(_)
                 | Value::None => unimplemented!("range query: unsupported value type"),
             };
             instant_vectors.push(ivec);
@@ -135,7 +135,7 @@ impl QueryEngine {
             })
             .collect::<Vec<_>>();
 
-        Ok(Value::MatrixValues(merged_data))
+        Ok(Value::Matrix(merged_data))
     }
 
     #[async_recursion]
@@ -157,14 +157,14 @@ impl QueryEngine {
                 todo!()
             }
             PromExpr::Subquery(_) => todo!(),
-            PromExpr::NumberLiteral(NumberLiteral { val }) => Value::NumberLiteral(*val),
+            PromExpr::NumberLiteral(NumberLiteral { val }) => Value::Float(*val),
             PromExpr::StringLiteral(_) => todo!(),
             PromExpr::VectorSelector(v) => {
                 let data = self.eval_vector_selector(v).await?;
                 if data.is_empty() {
                     Value::None
                 } else {
-                    Value::VectorValues(data)
+                    Value::Vector(data)
                 }
             }
             PromExpr::MatrixSelector(MatrixSelector {
@@ -175,7 +175,7 @@ impl QueryEngine {
                 if data.is_empty() {
                     Value::None
                 } else {
-                    Value::MatrixValues(data)
+                    Value::Matrix(data)
                 }
             }
             PromExpr::Call(Call { func, args }) => self.call_expr(func, args).await?,
@@ -398,7 +398,7 @@ impl QueryEngine {
         let values = if metric_values.is_empty() {
             Value::None
         } else {
-            Value::MatrixValues(metric_values)
+            Value::Matrix(metric_values)
         };
         let cache = Arc::get_mut(&mut self.data_cache).unwrap();
         cache.insert(table_name.to_string(), values);

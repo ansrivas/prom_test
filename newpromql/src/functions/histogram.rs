@@ -23,7 +23,7 @@ struct MetricWithBuckets {
 /// [`histogramQuantile`]: https://github.com/prometheus/prometheus/blob/f7c6130ff27a2a12412c02cce223f7a8abc59e49/promql/quantile.go#L146
 pub(crate) fn histogram_quantile(phi: f64, data: Value) -> Result<Value> {
     let in_vec = match data {
-        Value::VectorValues(v) => v,
+        Value::Vector(v) => v,
         _ => {
             return Err(DataFusionError::Internal(
                 "histogram_quantile: vector argument expected".to_owned(),
@@ -76,7 +76,7 @@ pub(crate) fn histogram_quantile(phi: f64, data: Value) -> Result<Value> {
         })
         .collect();
 
-    Ok(Value::ScalarValues(values))
+    Ok(Value::Scalars(values))
 }
 
 // cf. https://github.com/prometheus/prometheus/blob/cf1bea344a3c390a90c35ea8764c4a468b345d5e/promql/quantile.go#L76

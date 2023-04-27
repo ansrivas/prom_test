@@ -19,5 +19,5 @@ pub fn count(timestamp: i64, param: &Option<AggModifier>, data: &Value) -> Resul
             },
         })
         .collect::<Vec<_>>();
-    Ok(Value::VectorValues(values))
+    Ok(Value::Vector(values))
 }

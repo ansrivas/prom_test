@@ -79,19 +79,19 @@ pub struct ScalarValue {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Value {
-    InstantValue(InstantValue),
-    RangeValue(RangeValue),
-    VectorValues(Vec<InstantValue>),
-    MatrixValues(Vec<RangeValue>),
-    ScalarValues(Vec<ScalarValue>),
-    NumberLiteral(f64),
+    Instant(InstantValue),
+    Range(RangeValue),
+    Vector(Vec<InstantValue>),
+    Matrix(Vec<RangeValue>),
+    Scalars(Vec<ScalarValue>),
+    Float(f64),
     None,
 }
 
 impl Value {
     pub(crate) fn get_ref_matrix_values(&self) -> Option<&Vec<RangeValue>> {
         match self {
-            Value::MatrixValues(values) => Some(values),
+            Value::Matrix(values) => Some(values),
             _ => None,
         }
     }

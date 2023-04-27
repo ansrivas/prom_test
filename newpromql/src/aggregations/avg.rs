@@ -19,5 +19,5 @@ pub fn avg(timestamp: i64, param: &Option<AggModifier>, data: &Value) -> Result<
             },
         })
         .collect::<Vec<_>>();
-    Ok(Value::VectorValues(values))
+    Ok(Value::Vector(values))
 }
