@@ -36,6 +36,40 @@ pub struct RangeValue {
     pub values: Vec<Sample>,
 }
 
+impl RangeValue {
+    /// Returns first and last data points, [extrapolated] to the time window
+    /// boundaries.
+    ///
+    /// [extrapolated]: https://promlabs.com/blog/2021/01/29/how-exactly-does-promql-calculate-rates/#extrapolation-of-data
+    pub(crate) fn extrapolate(&self) -> Option<(Sample, Sample)> {
+        let samples = &self.values;
+        if samples.len() < 2 {
+            return None;
+        }
+        let first = samples.first().unwrap();
+        let last = samples.last().unwrap();
+
+        let (t_start, t_end) = self.time.unwrap();
+        assert!(t_start < t_end);
+        assert!(t_start <= first.timestamp);
+        assert!(first.timestamp <= last.timestamp);
+        assert!(last.timestamp <= t_end);
+
+        Some((
+            if first.timestamp == t_start {
+                *first
+            } else {
+                extrapolate_sample(first, last, t_start)
+            },
+            if last.timestamp == t_end {
+                *last
+            } else {
+                extrapolate_sample(first, last, t_end)
+            },
+        ))
+    }
+}
+
 /// A simple numeric floating point value.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScalarValue {
@@ -45,23 +79,19 @@ pub struct ScalarValue {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Value {
-    InstantValue(InstantValue),
-    RangeValue(RangeValue),
-    VectorValues(Vec<InstantValue>),
-    MatrixValues(Vec<RangeValue>),
-    ScalarValues(Vec<ScalarValue>),
-    NumberLiteral(f64),
+    Instant(InstantValue),
+    Range(RangeValue),
+    Vector(Vec<InstantValue>),
+    Matrix(Vec<RangeValue>),
+    Scalars(Vec<ScalarValue>),
+    Float(f64),
     None,
 }
 
 impl Value {
-    pub fn is_none(&self) -> bool {
-        matches!(self, Value::None)
-    }
-
-    pub fn get_ref_matrix_values(&self) -> Option<&Vec<RangeValue>> {
+    pub(crate) fn get_ref_matrix_values(&self) -> Option<&Vec<RangeValue>> {
         match self {
-            Value::MatrixValues(values) => Some(values),
+            Value::Matrix(values) => Some(values),
             _ => None,
         }
     }
@@ -77,10 +107,7 @@ impl Signature {
 }
 
 pub fn signature(metric: &Metric) -> Signature {
-    Signature(format!(
-        "{:x}",
-        md5::compute(sig_without_labels(metric, &[]))
-    ))
+    signature_without_labels(metric, &[])
 }
 
 // `signature_without_labels` is just as [`signature`], but only for labels not matching `names`.
@@ -100,7 +127,8 @@ fn sig_without_labels(metric: &Metric, names: &[&str]) -> String {
     kv_pairs.join(",")
 }
 
-pub fn extrapolate_sample(p1: &Sample, p2: &Sample, t: i64) -> Sample {
+/// https://promlabs.com/blog/2021/01/29/how-exactly-does-promql-calculate-rates/#extrapolation-of-data
+fn extrapolate_sample(p1: &Sample, p2: &Sample, t: i64) -> Sample {
     let dt = p2.timestamp - p1.timestamp;
     let dv = p2.value - p1.value;
     let dt2 = t - p1.timestamp;
@@ -134,6 +162,8 @@ mod tests {
             )
         "#]]
         .assert_debug_eq(&signature_without_labels(&metric, &["a", "c"]));
+
+        assert_eq!(signature(&metric), signature_without_labels(&metric, &[]));
     }
 
     #[test]

@@ -1809,7 +1809,6 @@ dependencies = [
  "regex-syntax",
  "serde",
  "strum",
- "strum_macros",
  "time",
  "tokio",
 ]

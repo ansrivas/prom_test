@@ -31,7 +31,10 @@ pub struct QueryEngine {
     interval: i64,
     /// Default look back from sample search.
     lookback_delta: i64,
-    exec_i: i64,
+    /// The index of the current time window. Used when evaluating a [range query].
+    ///
+    /// [range query]: https://promlabs.com/blog/2020/06/18/the-anatomy-of-a-promql-query/#range-queries
+    time_window_idx: i64,
     data_cache: Arc<HashMap<String, Value>>,
 }
 
@@ -49,7 +52,7 @@ impl QueryEngine {
             end: now,
             interval: five_min,
             lookback_delta: five_min,
-            exec_i: 0,
+            time_window_idx: 0,
             data_cache: Arc::new(HashMap::new()),
         }
     }
@@ -65,18 +68,50 @@ impl QueryEngine {
         }
 
         if self.start == self.end {
-            // instant query
+            // Instant query
             return self.exec_expr(&stmt.expr).await;
         }
 
-        // range query
+        // Range query
         let mut instant_vectors = Vec::new();
-        let nr_intervals = ((self.end - self.start) / self.interval) + 1;
-        for i in 0..nr_intervals {
-            self.exec_i = i;
-            if let Value::VectorValues(in_vec) = self.exec_expr(&stmt.expr).await? {
-                instant_vectors.push(in_vec);
-            }
+        // The number of time windows in this range query, i.e. the number of instant
+        // queries to execute.
+        //
+        // See https://promlabs.com/blog/2020/06/18/the-anatomy-of-a-promql-query/#range-queries
+        let nr_steps = ((self.end - self.start) / self.interval) + 1;
+        for i in 0..nr_steps {
+            self.time_window_idx = i;
+            let ivec = match self.exec_expr(&stmt.expr).await? {
+                Value::Vector(ivec) => ivec,
+                Value::Scalars(xs) => xs
+                    .into_iter()
+                    .map(|ScalarValue { metric, value }| InstantValue {
+                        metric,
+                        value: Sample {
+                            timestamp: self.end,
+                            value,
+                        },
+                    })
+                    .collect(),
+                // XXX-HACK:
+                //
+                // * An instant query can return any valid PromQL expression
+                //   type (string, scalar, instant and range vectors). [1]
+                //   We may have to support them eventually.
+                //
+                // [1]: https://promlabs.com/blog/2020/06/18/the-anatomy-of-a-promql-query/#instant-queries
+                //
+                // * Currently `crate::value` module is a hotchpotch of
+                //   internal data structures (e.g. `value::RangeValue`) and
+                //   user-facing data structures (instant vector, range
+                //   vector). Such a mixture is difficult to work with.
+                Value::Instant(_)
+                | Value::Range(_)
+                | Value::Matrix(_)
+                | Value::Float(_)
+                | Value::None => unimplemented!("range query: unsupported value type"),
+            };
+            instant_vectors.push(ivec);
         }
 
         // merge data
@@ -100,7 +135,7 @@ impl QueryEngine {
             })
             .collect::<Vec<_>>();
 
-        Ok(Value::MatrixValues(merged_data))
+        Ok(Value::Matrix(merged_data))
     }
 
     #[async_recursion]
@@ -122,14 +157,14 @@ impl QueryEngine {
                 todo!()
             }
             PromExpr::Subquery(_) => todo!(),
-            PromExpr::NumberLiteral(NumberLiteral { val }) => Value::NumberLiteral(*val),
+            PromExpr::NumberLiteral(NumberLiteral { val }) => Value::Float(*val),
             PromExpr::StringLiteral(_) => todo!(),
             PromExpr::VectorSelector(v) => {
                 let data = self.eval_vector_selector(v).await?;
                 if data.is_empty() {
                     Value::None
                 } else {
-                    Value::VectorValues(data)
+                    Value::Vector(data)
                 }
             }
             PromExpr::MatrixSelector(MatrixSelector {
@@ -140,7 +175,7 @@ impl QueryEngine {
                 if data.is_empty() {
                     Value::None
                 } else {
-                    Value::MatrixValues(data)
+                    Value::Matrix(data)
                 }
             }
             PromExpr::Call(Call { func, args }) => self.call_expr(func, args).await?,
@@ -202,7 +237,7 @@ impl QueryEngine {
             None => return Ok(vec![]),
         };
 
-        let end = self.start + (self.interval * self.exec_i); // 15s
+        let end = self.start + (self.interval * self.time_window_idx); // 15s
         let start = end - micros(range); // 5m
 
         let mut values = vec![];
@@ -230,9 +265,10 @@ impl QueryEngine {
         let table_name = selector.name.as_ref().unwrap();
         let table = self.ctx.table(table_name).await?;
 
-        let start = match range {
-            Some(range) => self.start + (self.interval * self.exec_i) - micros(range),
-            None => self.start + (self.interval * self.exec_i) - self.lookback_delta,
+        let start = {
+            // https://promlabs.com/blog/2020/07/02/selecting-data-in-promql/#lookback-delta
+            let lookback_delta = range.map_or(self.lookback_delta, micros);
+            self.start + (self.interval * self.time_window_idx) - lookback_delta
         };
         let end = self.end; // 30 minutes + 5m = 35m
 
@@ -362,7 +398,7 @@ impl QueryEngine {
         let values = if metric_values.is_empty() {
             Value::None
         } else {
-            Value::MatrixValues(metric_values)
+            Value::Matrix(metric_values)
         };
         let cache = Arc::get_mut(&mut self.data_cache).unwrap();
         cache.insert(table_name.to_string(), values);
@@ -376,7 +412,7 @@ impl QueryEngine {
         param: &Option<Box<PromExpr>>,
         modifier: &Option<AggModifier>,
     ) -> Result<Value> {
-        let sample_time = self.start + (self.interval * self.exec_i);
+        let sample_time = self.start + (self.interval * self.time_window_idx);
         let input = self.exec_expr(expr).await?;
 
         Ok(match op.id() {

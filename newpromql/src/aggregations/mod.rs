@@ -41,7 +41,7 @@ pub(crate) fn eval_arithmetic(
     f_handler: fn(total: f64, val: f64) -> f64,
 ) -> Result<Option<HashMap<Signature, ArithmeticItem>>> {
     let data = match data {
-        Value::VectorValues(v) => v,
+        Value::Vector(v) => v,
         Value::None => return Ok(None),
         _ => {
             return Err(DataFusionError::Internal(format!(
@@ -115,7 +115,7 @@ pub async fn eval_top(
 
     let param = ctx.exec_expr(&param).await?;
     let n = match param {
-        Value::NumberLiteral(v) => v as usize,
+        Value::Float(v) => v as usize,
         _ => {
             return Err(DataFusionError::Internal(format!(
                 "[{fn_name}] param must be NumberLiteral"
@@ -124,7 +124,7 @@ pub async fn eval_top(
     };
 
     let data = match data {
-        Value::VectorValues(v) => v,
+        Value::Vector(v) => v,
         Value::None => return Ok(Value::None),
         _ => {
             return Err(DataFusionError::Internal(format!(
@@ -151,5 +151,5 @@ pub async fn eval_top(
         .take(n)
         .map(|v| data[v.index].clone())
         .collect();
-    Ok(Value::VectorValues(values))
+    Ok(Value::Vector(values))
 }
