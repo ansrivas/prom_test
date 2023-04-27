@@ -89,11 +89,7 @@ pub enum Value {
 }
 
 impl Value {
-    pub fn is_none(&self) -> bool {
-        matches!(self, Value::None)
-    }
-
-    pub fn get_ref_matrix_values(&self) -> Option<&Vec<RangeValue>> {
+    pub(crate) fn get_ref_matrix_values(&self) -> Option<&Vec<RangeValue>> {
         match self {
             Value::MatrixValues(values) => Some(values),
             _ => None,

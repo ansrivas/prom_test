@@ -57,7 +57,7 @@ async fn main() {
     let data_end = get_updated_timestamp().unwrap();
     let data_start = data_end - 1800;
     tracing::info!(
-        "loading data within time interval [{}..{}]",
+        "loading data within time interval [ {} .. {} ]",
         data_start,
         data_end
     );
