@@ -5,13 +5,13 @@ Test implementation of PromQL processor based on DataFusion.
 ## Run HTTP API server
 
 ```shell
-cargo run --release -- -s ''
+cargo run --release -- --server
 ```
 
 ## Run a single PromQL query
 
 ```shell
-cargo run --release -- -d 'zo_http_incoming_requests{namespace="ziox-alpha1",organization="default"}'
+cargo run --release -- --debug 'zo_http_incoming_requests{namespace="ziox-alpha1",organization="default"}'
 ```
 
 ## Fetch new metrics data
@@ -42,20 +42,20 @@ histogram_quantile(0.9, sum by (le, exported_endpoint) (rate(zo_http_response_ti
 zo_http_incoming_requests{namespace="ziox-alpha1",organization="default"}[35m]
 ```
 
-http://localhost:9090/api/v1/query?query=zo_http_incoming_requests%7Bnamespace%3D%22ziox-alpha1%22%2Corganization%3D%22default%22%7D%5B35m%5D&time=1682496000.385
+<http://localhost:9090/api/v1/query?query=zo_http_incoming_requests%7Bnamespace%3D%22ziox-alpha1%22%2Corganization%3D%22default%22%7D%5B35m%5D&time=1682496000.385>
 
 ```promql
 zo_storage_files{namespace="ziox-alpha1",organization="default"}[35m]
 ```
 
-http://localhost:9090/api/v1/query?query=zo_storage_files%7Bnamespace%3D%22ziox-alpha1%22%2Corganization%3D%22default%22%7D%5B35m%5D&time=1682496000.385
+<http://localhost:9090/api/v1/query?query=zo_storage_files%7Bnamespace%3D%22ziox-alpha1%22%2Corganization%3D%22default%22%7D%5B35m%5D&time=1682496000.385>
 
 ```promql
 zo_http_response_time_bucket{namespace="ziox-alpha1",organization="default"}[35m]
 ```
 
-http://localhost:9090/api/v1/query?query=zo_http_response_time_bucket%7Bnamespace%3D%22ziox-alpha1%22%2Corganization%3D%22default%22%7D%5B35m%5D&time=1682496000.385
+<http://localhost:9090/api/v1/query?query=zo_http_response_time_bucket%7Bnamespace%3D%22ziox-alpha1%22%2Corganization%3D%22default%22%7D%5B35m%5D&time=1682496000.385>
 
-http://localhost:9090/api/v1/query?query=zo_http_response_time_count%7Bnamespace%3D%22ziox-alpha1%22%2Corganization%3D%22default%22%7D%5B35m%5D&time=1682496000.385
+<http://localhost:9090/api/v1/query?query=zo_http_response_time_count%7Bnamespace%3D%22ziox-alpha1%22%2Corganization%3D%22default%22%7D%5B35m%5D&time=1682496000.385>
 
-http://localhost:9090/api/v1/query?query=zo_http_response_time_sum%7Bnamespace%3D%22ziox-alpha1%22%2Corganization%3D%22default%22%7D%5B35m%5D&time=1682496000.385
+<http://localhost:9090/api/v1/query?query=zo_http_response_time_sum%7Bnamespace%3D%22ziox-alpha1%22%2Corganization%3D%22default%22%7D%5B35m%5D&time=1682496000.385>

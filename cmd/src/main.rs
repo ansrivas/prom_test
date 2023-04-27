@@ -1,5 +1,6 @@
 use arrow_array::{ArrayRef, Float64Array};
 use clap::Parser;
+use color_eyre::eyre::{eyre, Result, WrapErr};
 use datafusion::{
     arrow::{
         array::{Int64Array, StringArray},
@@ -7,7 +8,6 @@ use datafusion::{
         record_batch::RecordBatch,
     },
     datasource::MemTable,
-    error::{DataFusionError, Result},
     prelude::SessionContext,
 };
 use promql_parser::parser;
@@ -35,9 +35,9 @@ Examples:
     irate(zo_response_time_count{cluster="zo1"}[5m])
     topk(1, irate(zo_response_time_count{cluster="zo1"}[5m]))
     histogram_quantile(0.9, rate(zo_response_time_bucket[5m]))"#)]
-    expr: String,
+    expr: Option<String>,
     /// Run as HTTP API server
-    #[arg(short, long)]
+    #[arg(short, long, conflicts_with = "expr")]
     server: bool,
     /// Enable debug mode
     #[arg(short, long)]
@@ -45,16 +45,18 @@ Examples:
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<()> {
+    color_eyre::install()?;
     tracing_subscriber::fmt()
         .with_target(false)
         .compact()
         .init();
+
     let cli = Cli::parse();
     let start_time = time::Instant::now();
 
     // read data updated timestamp
-    let data_end = get_updated_timestamp().unwrap();
+    let data_end = get_updated_timestamp()?;
     let data_start = data_end - 1800;
     tracing::info!(
         "loading data within time interval [ {} .. {} ]",
@@ -66,10 +68,10 @@ async fn main() {
         tracing::info!("start http server: {}", start_time.elapsed());
         http::server().await;
         tracing::info!("stopping http server: {}", start_time.elapsed());
-        return;
+        return Ok(());
     }
 
-    let prom_expr = parser::parse(&cli.expr).unwrap();
+    let prom_expr = parser::parse(&cli.expr.unwrap()).map_err(|e| eyre!("parsing failed: {e}"))?;
     if cli.debug {
         dbg!(&prom_expr);
     }
@@ -86,30 +88,30 @@ async fn main() {
         lookback_delta: Duration::from_secs(300),
     };
 
-    let ctx = create_context().unwrap();
+    let ctx = create_context()?;
     tracing::info!("prepare time: {}", start_time.elapsed());
 
     let mut engine = newpromql::QueryEngine::new(ctx);
-    let data = engine.exec(eval_stmt).await.unwrap();
+    let data = engine.exec(eval_stmt).await?;
     if cli.debug {
         dbg!(data);
     }
     tracing::info!("execute time: {}", start_time.elapsed());
+    Ok(())
 }
 
 fn get_updated_timestamp() -> Result<u64> {
-    let file = concat!(env!("CARGO_MANIFEST_DIR"), "/../samples/timestamp.log");
-    let data = fs::read_to_string(file).unwrap();
-    let data = data.trim();
-    Ok(data.parse::<u64>().unwrap())
+    let path = "samples/timestamp.log";
+    Ok(fs::read_to_string(path).wrap_err(path)?.trim().parse()?)
 }
 
 // create local session context with an in-memory table
 fn create_context() -> Result<SessionContext> {
     let ctx = SessionContext::new();
-    let paths = fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../samples")).unwrap();
+    let dir = "samples";
+    let paths = fs::read_dir(dir).wrap_err(dir)?;
     for dentry in paths {
-        create_table_by_file(&ctx, dentry.unwrap().path())?;
+        create_table_by_file(&ctx, dentry?.path())?;
     }
     Ok(ctx)
 }
@@ -127,10 +129,9 @@ fn create_table_by_file<P: AsRef<Path>>(ctx: &SessionContext, path: P) -> Result
         _ => "",
     };
 
-    let data = fs::read(path).unwrap();
-    let resp: Response = serde_json::from_slice(&data).map_err(|e| {
-        DataFusionError::Execution(format!("Failed to parse JSON file {}: {e}", path.display()))
-    })?;
+    let data = fs::read(path).wrap_err_with(|| format!("{}", path.display()))?;
+    let resp: Response = serde_json::from_slice(&data)
+        .map_err(|e| eyre!("Failed to parse JSON file {}: {e}", path.display()))?;
     // XXX-FIXME: collect labels from all time series, not only the first one
     let schema = Arc::new(create_schema_from_record(&resp.data.result));
     let batch = create_record_batch(metric_type, schema.clone(), &resp.data.result)?;
@@ -207,7 +208,7 @@ fn create_record_batch(
                 .or_default()
                 .push(metric_type.to_string());
             time_field_values.push((sample.timestamp * 1_000_000.0) as i64);
-            value_field_values.push(sample.value.parse::<f64>().unwrap());
+            value_field_values.push(sample.value.parse::<f64>()?);
         }
     }
 
