@@ -115,7 +115,7 @@ impl QueryEngine {
                         value: v,
                     }],
                 }),
-                _ => continue,
+                Value::None => continue,
             };
         }
 

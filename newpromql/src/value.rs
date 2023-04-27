@@ -29,10 +29,8 @@ impl Serialize for Sample {
         S: Serializer,
     {
         let mut seq = serializer.serialize_seq(Some(2))?;
-        let ts_seconds = self.timestamp / 1_000_000;
-        let value = format!("{}", self.value);
-        seq.serialize_element(&ts_seconds)?;
-        seq.serialize_element(&value)?;
+        seq.serialize_element(&(self.timestamp / 1_000_000))?;
+        seq.serialize_element(&self.value.to_string())?;
         seq.end()
     }
 }
