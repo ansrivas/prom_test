@@ -2,6 +2,18 @@
 
 Test implement PromQL parse with Datafusion.
 
+## run api server
+
+```shell
+cargo run --release -- -s ''
+```
+
+## run cli query
+
+```shell
+cargo run --release -- -d 'zo_http_incoming_requests{namespace="ziox-alpha1",organization="default"}'
+```
+
 ## update samples
 
 ```shell

@@ -36,6 +36,7 @@ pub struct QueryResult {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct QueryResponse {
     pub status: String, // success, error
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -49,7 +50,17 @@ pub struct QueryResponse {
 pub async fn query(req: Query<QueryRequest>) -> Json<QueryResponse> {
     let start_time = time::Instant::now();
 
-    let prom_expr = parser::parse(&req.query).unwrap();
+    let prom_expr = match parser::parse(&req.query) {
+        Ok(expr) => expr,
+        Err(e) => {
+            return Json(QueryResponse {
+                status: "error".to_string(),
+                data: None,
+                error_type: Some("bad_data".to_string()),
+                error: Some(e),
+            })
+        }
+    };
 
     let mk_time = |t| {
         UNIX_EPOCH
