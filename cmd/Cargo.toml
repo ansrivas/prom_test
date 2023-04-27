@@ -1,5 +1,5 @@
 [package]
-name = "prom_test_bin"
+name = "prom-test"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

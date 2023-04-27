@@ -1,0 +1,31 @@
+version: 0.2
+
+phases:
+  pre_build:
+    commands:
+      - aws ecr-public get-login-password --region us-east-1 | docker login --username AWS --password-stdin public.ecr.aws/zinclabs
+
+  build:
+    commands:
+      - pwd
+      - GIT_TAG=$(git describe --tags --abbrev=0)
+      - GIT_HASH=$(git rev-parse --short HEAD)
+      - echo "Building for commit $GIT_HASH"
+
+      # install buildx
+      - wget -nv https://github.com/docker/buildx/releases/download/v0.10.4/buildx-v0.10.4.linux-amd64
+      - chmod +x buildx-v0.10.4.linux-amd64
+      - mkdir -p ~/.docker/cli-plugins
+      - mv buildx-v0.10.4.linux-amd64 ~/.docker/cli-plugins/docker-buildx
+      - docker buildx install
+
+      # build prom-test
+      - docker pull public.ecr.aws/zinclabs/rust:bullseye-sccache
+      - docker build -t prom-test:latest -f deploy/build/Dockerfile .
+      - docker tag prom-test:latest public.ecr.aws/zinclabs/prom-test-dev:$GIT_TAG-$GIT_HASH
+      - docker tag prom-test:latest public.ecr.aws/zinclabs/prom-test-dev:latest
+      - docker push public.ecr.aws/zinclabs/prom-test-dev:$GIT_TAG-$GIT_HASH
+      - docker push public.ecr.aws/zinclabs/prom-test-dev:latest
+cache:
+  paths:
+    - /root/.cache/

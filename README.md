@@ -1,28 +1,33 @@
-# Prometheus parse test
+# PromQL engine experiments
 
-Test implement PromQL parse with Datafusion.
+Test implementation of PromQL processor based on DataFusion.
 
-## run api server
+## Run HTTP API server
 
 ```shell
 cargo run --release -- -s ''
 ```
 
-## run cli query
+## Run a single PromQL query
 
 ```shell
 cargo run --release -- -d 'zo_http_incoming_requests{namespace="ziox-alpha1",organization="default"}'
 ```
 
-## update samples
+## Fetch new metrics data
 
 ```shell
 ./update-samples.sh
 ```
 
-## sample query
+## Build Docker image
 
-```
+- Install [`just`](https://github.com/casey/just) tool.
+- Run `just docker-build`.
+
+## PromQL query examples
+
+```promql
 zo_http_incoming_requests{namespace="ziox-alpha1",organization="default"}
 irate(zo_http_response_time_count{namespace="ziox-alpha1",organization="default"}[5m])
 topk(1, irate(zo_http_response_time_count{namespace="ziox-alpha1",organization="default"}[5m]))
@@ -31,22 +36,21 @@ topk(2,histogram_quantile(0.8, rate(zo_http_response_time_bucket{namespace="ziox
 histogram_quantile(0.9, sum by (le, exported_endpoint) (rate(zo_http_response_time_bucket{namespace="ziox-alpha1",organization="default",exported_endpoint=~".*_json"}[5m])))
 ```
 
-## sample data URLs
+## Sample data URLs
 
-```
+```promql
 zo_http_incoming_requests{namespace="ziox-alpha1",organization="default"}[35m]
 ```
 
 http://localhost:9090/api/v1/query?query=zo_http_incoming_requests%7Bnamespace%3D%22ziox-alpha1%22%2Corganization%3D%22default%22%7D%5B35m%5D&time=1682496000.385
 
-
-```
+```promql
 zo_storage_files{namespace="ziox-alpha1",organization="default"}[35m]
 ```
 
 http://localhost:9090/api/v1/query?query=zo_storage_files%7Bnamespace%3D%22ziox-alpha1%22%2Corganization%3D%22default%22%7D%5B35m%5D&time=1682496000.385
 
-```
+```promql
 zo_http_response_time_bucket{namespace="ziox-alpha1",organization="default"}[35m]
 ```
 
