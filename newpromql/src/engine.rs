@@ -138,7 +138,7 @@ impl QueryEngine {
                 .for_each(|item| entry.push(item.to_owned()));
             merged_metrics.insert(signature(&value.metric), value.metric);
         }
-        let mut merged_data = merged_data
+        let merged_data = merged_data
             .into_iter()
             .map(|(metric, values)| RangeValue {
                 metric: merged_metrics.get(&metric).unwrap().to_owned(),
@@ -148,13 +148,9 @@ impl QueryEngine {
             .collect::<Vec<_>>();
 
         // sort data
-        merged_data.sort_by(|a, b| {
-            let a = a.values.first().unwrap();
-            let b = b.values.first().unwrap();
-            b.value.partial_cmp(&a.value).unwrap()
-        });
-
-        Ok(Value::Matrix(merged_data))
+        let mut value = Value::Matrix(merged_data);
+        value.sort();
+        Ok(value)
     }
 
     #[async_recursion]

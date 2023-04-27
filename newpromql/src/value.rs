@@ -122,9 +122,9 @@ impl Value {
             }
             Value::Matrix(v) => {
                 v.sort_by(|a, b| {
-                    let a = a.values.first().unwrap();
-                    let b = b.values.first().unwrap();
-                    b.value.partial_cmp(&a.value).unwrap()
+                    let a = a.values.iter().map(|x| x.value).sum::<f64>();
+                    let b = b.values.iter().map(|x| x.value).sum::<f64>();
+                    b.partial_cmp(&a).unwrap()
                 });
             }
             _ => {}
