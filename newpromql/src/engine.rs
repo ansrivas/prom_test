@@ -76,6 +76,7 @@ impl QueryEngine {
                     value: v,
                 });
             }
+            value.sort();
             return Ok(value);
         }
 

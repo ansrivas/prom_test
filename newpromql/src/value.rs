@@ -102,6 +102,7 @@ impl Value {
             _ => None,
         }
     }
+
     pub fn get_type(&self) -> &str {
         match self {
             Value::Instant(_) => "vector",
@@ -111,6 +112,22 @@ impl Value {
             Value::Sample(_) => "scalar",
             Value::Float(_) => "scalar",
             Value::None => "scalar",
+        }
+    }
+
+    pub fn sort(&mut self) {
+        match self {
+            Value::Vector(v) => {
+                v.sort_by(|a, b| b.value.value.partial_cmp(&a.value.value).unwrap());
+            }
+            Value::Matrix(v) => {
+                v.sort_by(|a, b| {
+                    let a = a.values.first().unwrap();
+                    let b = b.values.first().unwrap();
+                    b.value.partial_cmp(&a.value).unwrap()
+                });
+            }
+            _ => {}
         }
     }
 }
