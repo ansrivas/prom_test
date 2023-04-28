@@ -57,7 +57,15 @@ pub(crate) fn eval_arithmetic(
                 for item in data.iter() {
                     let mut sum_labels = HashMap::new();
                     for label in labels {
-                        sum_labels.insert(label.clone(), item.metric.get(label).unwrap().clone());
+                        let value = match item.metric.get(label) {
+                            Some(v) => v,
+                            None => {
+                                return Err(DataFusionError::Internal(format!(
+                                    "label: [{label}] not exists"
+                                )))
+                            }
+                        };
+                        sum_labels.insert(label.clone(), value.clone());
                     }
                     let sum_hash = signature(&sum_labels);
                     let entry = score_values.entry(sum_hash).or_insert(ArithmeticItem {
