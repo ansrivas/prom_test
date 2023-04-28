@@ -20,6 +20,15 @@ cargo run --release -- --debug 'zo_http_incoming_requests{namespace="ziox-alpha1
 ./update-samples.sh
 ```
 
+### in k8s update for test
+
+```shell
+apt update
+apt install -y curl
+sed -i 's#localhost#prometheus#g' update-samples.sh
+./update-samples.sh
+```
+
 ## Build Docker image
 
 - Install [`just`](https://github.com/casey/just) tool.
