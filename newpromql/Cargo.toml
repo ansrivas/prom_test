@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 async-recursion = "1.0"
+arrow.workspace = true
 datafusion.workspace = true
 md5 = "0.7"
 promql-parser = "0.1"

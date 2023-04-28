@@ -52,7 +52,7 @@ pub async fn index() -> String {
 }
 
 pub async fn query(req: Query<QueryRequest>) -> Json<QueryResponse> {
-    let start_time = time::Instant::now();
+    // let start_time = time::Instant::now();
 
     let prom_expr = match parser::parse(&req.query) {
         Ok(expr) => expr,
@@ -88,7 +88,7 @@ pub async fn query(req: Query<QueryRequest>) -> Json<QueryResponse> {
     };
 
     let ctx = super::CONTEXT.clone();
-    tracing::info!("prepare time: {}", start_time.elapsed());
+    // tracing::info!("prepare time: {}", start_time.elapsed());
 
     let mut engine = newpromql::QueryEngine::new(ctx);
     let response = match engine.exec(eval_stmt).await {
@@ -108,7 +108,7 @@ pub async fn query(req: Query<QueryRequest>) -> Json<QueryResponse> {
             error: Some(e.to_string()),
         },
     };
-    tracing::info!("execute time: {}", start_time.elapsed());
+    // tracing::info!("execute time: {}", start_time.elapsed());
 
     Json(response)
 }
