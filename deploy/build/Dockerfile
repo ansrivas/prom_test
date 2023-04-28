@@ -16,4 +16,4 @@ WORKDIR /app
 
 COPY --from=builder /app/target/release/prom-test /app/
 COPY --from=builder /app/samples /app/samples
-ENTRYPOINT ["./prom-test"]
+CMD ["./prom-test", "--server"]
