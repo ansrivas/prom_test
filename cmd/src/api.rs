@@ -58,7 +58,6 @@ pub async fn index() -> String {
     "Hello, World!".to_string()
 }
 
-
 pub async fn query(
     req: Query<QueryRequest>,
     State(ctx): State<Arc<SessionContext>>,
@@ -97,7 +96,6 @@ pub async fn query(
         interval, // step
         lookback_delta: Duration::from_secs(300),
     };
-
 
     let mut engine = newpromql::QueryEngine::new(ctx);
     let response = match engine.exec(eval_stmt).await {

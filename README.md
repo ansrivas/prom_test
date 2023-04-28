@@ -68,3 +68,25 @@ zo_http_response_time_bucket{namespace="ziox-alpha1",organization="default"}[35m
 <http://localhost:9090/api/v1/query?query=zo_http_response_time_count%7Bnamespace%3D%22ziox-alpha1%22%2Corganization%3D%22default%22%7D%5B35m%5D&time=1682496000.385>
 
 <http://localhost:9090/api/v1/query?query=zo_http_response_time_sum%7Bnamespace%3D%22ziox-alpha1%22%2Corganization%3D%22default%22%7D%5B35m%5D&time=1682496000.385>
+
+## Benchmarking
+
+1. Run benchmarks
+
+```shell
+cargo bench
+```
+
+2. Install [`cargo-flamegraph`](https://github.com/flamegraph-rs/flamegraph):
+
+```shell
+cargo install flamegraph
+```
+
+3. Generate `flamegraph.svg`:
+
+```shell
+CARGO_PROFILE_BENCH_DEBUG=true cargo flamegraph --root --bench it
+```
+
+4. Open `flamegraph.svg` in your browser.
