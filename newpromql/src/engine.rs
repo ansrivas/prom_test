@@ -22,7 +22,7 @@ use std::{
 use crate::{aggregations, functions, value::*};
 
 pub struct QueryEngine {
-    ctx: SessionContext,
+    ctx: Arc<SessionContext>,
     /// The time boundaries for the evaluation. If start equals end an instant
     /// is evaluated.
     start: i64,
@@ -39,11 +39,7 @@ pub struct QueryEngine {
 }
 
 impl QueryEngine {
-    pub fn new(mut ctx: SessionContext) -> Self {
-        // register regexp match
-        super::datafusion::register_udf(&mut ctx);
-        let ctx = ctx;
-
+    pub fn new(ctx: Arc<SessionContext>) -> Self {
         let now = micros_since_epoch(SystemTime::now());
         let five_min = micros(Duration::from_secs(300));
         Self {

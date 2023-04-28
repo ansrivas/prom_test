@@ -87,7 +87,7 @@ pub async fn query(req: Query<QueryRequest>) -> Json<QueryResponse> {
         lookback_delta: Duration::from_secs(300),
     };
 
-    let ctx = super::create_context().unwrap();
+    let ctx = super::CONTEXT.clone();
     tracing::info!("prepare time: {}", start_time.elapsed());
 
     let mut engine = newpromql::QueryEngine::new(ctx);

@@ -10,6 +10,7 @@ use datafusion::{
     datasource::MemTable,
     prelude::SessionContext,
 };
+use once_cell::sync::Lazy;
 use promql_parser::parser;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -24,6 +25,8 @@ use newpromql::value::*;
 
 mod api;
 mod http;
+
+pub static CONTEXT: Lazy<Arc<SessionContext>> = Lazy::new(init_context);
 
 #[derive(Debug, Parser)]
 struct Cli {
@@ -64,6 +67,11 @@ async fn main() -> Result<()> {
         data_end
     );
 
+    let ctx = CONTEXT.clone();
+    ctx.catalog_names().iter().for_each(|name| {
+        tracing::info!("catalog: {}", name);
+    });
+
     if cli.server {
         tracing::info!("start http server: {}", start_time.elapsed());
         http::server().await;
@@ -88,7 +96,7 @@ async fn main() -> Result<()> {
         lookback_delta: Duration::from_secs(300),
     };
 
-    let ctx = create_context()?;
+    let ctx = CONTEXT.clone();
     tracing::info!("prepare time: {}", start_time.elapsed());
 
     let mut engine = newpromql::QueryEngine::new(ctx);
@@ -109,6 +117,17 @@ fn get_updated_timestamp() -> Result<u64> {
             Ok(0)
         }
     }
+}
+
+fn init_context() -> Arc<SessionContext> {
+    // create context
+    let mut ctx = match create_context() {
+        Ok(ctx) => ctx,
+        Err(e) => panic!("init context error: {:?}", e),
+    };
+    // register regexp match
+    newpromql::datafusion::register_udf(&mut ctx);
+    Arc::new(ctx)
 }
 
 // create local session context with an in-memory table
