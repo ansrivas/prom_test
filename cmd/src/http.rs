@@ -9,6 +9,7 @@ use super::api;
 pub async fn server() {
     // build our application with a route
     let app = Router::new()
+        .route("/", get(api::index))
         .route("/api/v1/query", get(api::query).post(api::query))
         .route("/api/v1/query_range", get(api::query).post(api::query))
         .layer(

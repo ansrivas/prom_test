@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ubuntu
+  namespace: prom-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ubuntu
+  template:
+    metadata:
+      labels:
+        app: ubuntu
+    spec:
+      # nodeSelector:
+      #   node.kubernetes.io/instance-type: c5n.large
+      # serviceAccount: zinc-s3
+      containers:
+        - name: ubuntu
+          image: public.ecr.aws/debian/debian:bullseye
+          command: ["/bin/bash", "-c", "while true; do sleep 1; done"] 

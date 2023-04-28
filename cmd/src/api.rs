@@ -47,6 +47,10 @@ pub struct QueryResponse {
     pub error: Option<String>,
 }
 
+pub async fn index() -> String {
+    "Hello, World!".to_string()
+}
+
 pub async fn query(req: Query<QueryRequest>) -> Json<QueryResponse> {
     let start_time = time::Instant::now();
 
