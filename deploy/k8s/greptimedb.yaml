@@ -36,6 +36,7 @@ spec:
       containers:
         - name: greptimedb
           image: greptime/greptimedb:latest
+          imagePullPolicy: Always
           command: ["greptime", "standalone", "start", "--http-addr", "0.0.0.0:4000"] 
           ports:
           - containerPort: 4000

@@ -15,5 +15,6 @@ RUN set -eux; \
 WORKDIR /app
 
 COPY --from=builder /app/target/release/prom-test /app/
+COPY --from=builder /update-samples.sh /app/update-samples.sh
 COPY --from=builder /app/samples /app/samples
 CMD ["./prom-test", "--server"]

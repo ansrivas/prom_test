@@ -36,6 +36,7 @@ spec:
       containers:
         - name: promtest
           image: public.ecr.aws/zinclabs/prom-test-dev:latest
+          imagePullPolicy: Always
           ports:
           - containerPort: 5080
             name: http
