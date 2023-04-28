@@ -1,5 +1,5 @@
 [package]
-name = "prom_test_bin"
+name = "prom-test"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,13 +9,14 @@ arrow = { version = "36.0", features = ["simd", "ipc_compression"] }
 arrow-array = "36.0"
 axum = { version = "0.6", features = ["headers"] }
 clap = { version = "4.2", features = ["derive"] }
+color-eyre = "0.6"
 datafusion.workspace = true
 newpromql = { path = "../newpromql" }
 promql-parser = "0.1"
 serde.workspace = true
 serde_json = "1.0"
 time.workspace = true
-tokio = { version = "1.27", features = ["full"] }
+tokio = { version = "1.28", features = ["full"] }
 tower-http = { version = "0.4", features = ["trace"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
