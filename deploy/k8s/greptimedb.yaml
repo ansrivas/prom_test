@@ -1,0 +1,56 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: greptimedb
+  namespace: prom-test
+  labels:
+    name: greptimedb
+spec:
+  selector:
+    app: greptimedb
+  ports:
+  - name: http
+    port: 4000
+    targetPort: 4000
+
+---
+
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: greptimedb
+  namespace: prom-test
+spec:
+  serviceName: greptimedb
+  replicas: 1
+  selector:
+    matchLabels:
+      app: greptimedb
+  template:
+    metadata:
+      labels:
+        app: greptimedb
+    spec:
+      nodeSelector:
+        node.kubernetes.io/instance-type: c2-standard-8
+      containers:
+        - name: greptimedb
+          image: greptime/greptimedb:latest
+          command: ["greptime", "standalone", "start", "--http-addr", "0.0.0.0:4000"] 
+          ports:
+          - containerPort: 4000
+            name: http
+          volumeMounts:
+          - name: data
+            mountPath: /tmp/greptimedb
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes:
+        - ReadWriteOnce
+      # storageClassName: default
+      # NOTE: You can increase the storage size
+      resources:
+        requests:
+          storage: 10Gi

@@ -102,7 +102,13 @@ async fn main() -> Result<()> {
 
 fn get_updated_timestamp() -> Result<u64> {
     let path = "samples/timestamp.log";
-    Ok(fs::read_to_string(path).wrap_err(path)?.trim().parse()?)
+    match fs::read_to_string(path).wrap_err(path) {
+        Ok(s) => Ok(s.parse().wrap_err(path)?),
+        Err(e) => {
+            tracing::error!("load samples error: {:?}", e);
+            Ok(0)
+        }
+    }
 }
 
 // create local session context with an in-memory table

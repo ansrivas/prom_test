@@ -1,0 +1,98 @@
+apiVersion: v1
+data:
+  prometheus.yml: |
+    # my global config
+    global:
+      scrape_interval: 5s # Set the scrape interval to every 15 seconds. Default is every 1 minute. 
+      evaluation_interval: 5s # Evaluate rules every 15 seconds. The default is every 1 minute.     
+      # scrape_timeout is set to the global default (10s).
+
+    # Alertmanager configuration
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets:
+              # - alertmanager:9093
+
+    # Load rules once and periodically evaluate them according to the global 'evaluation_interval'.  
+    rule_files:
+      # - "first_rules.yml"
+      # - "second_rules.yml"
+
+    # A scrape configuration containing exactly one endpoint to scrape:
+    # Here it's Prometheus itself.
+    scrape_configs:
+      # The job name is added as a label `job=<job_name>` to any timeseries scraped from this config.
+      - job_name: "prometheus"
+
+        # metrics_path defaults to '/metrics'
+        # scheme defaults to 'http'.
+
+        static_configs:
+          - targets: ["localhost:9090"]
+    
+      # - job_name: 'zinc'
+      #   static_configs:
+      #     - targets: ['172.17.0.3:4080']
+      #       labels:
+      #         app: 'zinc-api'
+      #         env: 'test'
+
+kind: ConfigMap
+metadata:
+  labels:
+    app: prometheus
+  name: prometheus-config
+  namespace: prom-test
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: prom-test
+  labels:
+    name: prometheus
+spec:
+  selector:
+    app: prometheus
+  ports:
+  - name: http
+    port: 9090
+    targetPort: 9090
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: prom-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      nodeSelector:
+        node.kubernetes.io/instance-type: c2-standard-8
+      containers:
+        - name: prometheus
+          image: bitnami/prometheus:latest
+          ports:
+          - containerPort: 9090
+            name: http
+          volumeMounts:
+            - name: prometheus-config
+              mountPath: /opt/bitnami/prometheus/conf/
+              readOnly: true
+      volumes:
+        - name: prometheus-config
+          configMap:
+            name: prometheus-config
+            defaultMode: 420
