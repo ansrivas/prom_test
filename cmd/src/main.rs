@@ -124,15 +124,18 @@ fn create_context() -> Result<SessionContext> {
 
 fn create_table_by_file<P: AsRef<Path>>(ctx: &SessionContext, path: P) -> Result<()> {
     let path = path.as_ref();
-    let metric_type = match path {
-        p if p.ends_with("counter.json") => TYPE_COUNTER,
-        p if p.ends_with("gauge.json") => TYPE_GAUGE,
-        p if p.ends_with("histogram_bucket.json") => TYPE_HISTOGRAM,
-        p if p.ends_with("histogram_count.json") => TYPE_COUNTER,
-        p if p.ends_with("histogram_sum.json") => TYPE_COUNTER,
-        p if p.ends_with("summary.json") => TYPE_SUMMARY,
-        p if p.ends_with("timestamp.log") => return Ok(()),
-        _ => "",
+    let file_path = path.to_str().unwrap();
+    if !file_path.ends_with(".json") {
+        return Ok(());
+    }
+    let metric_type = match file_path {
+        p if p.contains("counter") => TYPE_COUNTER,
+        p if p.contains("gauge") => TYPE_GAUGE,
+        p if p.contains("histogram_bucket") => TYPE_HISTOGRAM,
+        p if p.contains("histogram_count") => TYPE_COUNTER,
+        p if p.contains("histogram_sum") => TYPE_COUNTER,
+        p if p.contains("summary") => TYPE_SUMMARY,
+        _ => return Ok(()),
     };
 
     let data = fs::read(path).wrap_err_with(|| format!("{}", path.display()))?;
