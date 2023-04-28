@@ -10,7 +10,6 @@ use datafusion::{
     datasource::MemTable,
     prelude::SessionContext,
 };
-use once_cell::sync::Lazy;
 use promql_parser::parser;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -25,8 +24,6 @@ use newpromql::value::*;
 
 mod api;
 mod http;
-
-pub static CONTEXT: Lazy<Arc<SessionContext>> = Lazy::new(init_context);
 
 #[derive(Debug, Parser)]
 struct Cli {
@@ -67,14 +64,16 @@ async fn main() -> Result<()> {
         data_end
     );
 
-    let ctx = CONTEXT.clone();
+    let ctx = create_context()?;
+    tracing::info!("prepare time: {}", start_time.elapsed());
+
     ctx.catalog_names().iter().for_each(|name| {
         tracing::info!("catalog: {}", name);
     });
 
     if cli.server {
         tracing::info!("start http server: {}", start_time.elapsed());
-        http::server().await;
+        http::server(ctx).await;
         tracing::info!("stopping http server: {}", start_time.elapsed());
         return Ok(());
     }
@@ -96,10 +95,7 @@ async fn main() -> Result<()> {
         lookback_delta: Duration::from_secs(300),
     };
 
-    let ctx = CONTEXT.clone();
-    tracing::info!("prepare time: {}", start_time.elapsed());
-
-    let mut engine = newpromql::QueryEngine::new(ctx);
+    let mut engine = newpromql::QueryEngine::new(Arc::new(ctx));
     let data = engine.exec(eval_stmt).await?;
     if cli.debug {
         dbg!(data);
@@ -119,25 +115,16 @@ fn get_updated_timestamp() -> Result<u64> {
     }
 }
 
-fn init_context() -> Arc<SessionContext> {
-    // create context
-    let mut ctx = match create_context() {
-        Ok(ctx) => ctx,
-        Err(e) => panic!("init context error: {:?}", e),
-    };
-    // register regexp match
-    newpromql::datafusion::register_udf(&mut ctx);
-    Arc::new(ctx)
-}
-
 // create local session context with an in-memory table
 fn create_context() -> Result<SessionContext> {
-    let ctx = SessionContext::new();
+    let mut ctx = SessionContext::new();
     let dir = "samples";
     let paths = fs::read_dir(dir).wrap_err(dir)?;
     for dentry in paths {
         create_table_by_file(&ctx, dentry?.path())?;
     }
+    // register regexp match
+    newpromql::datafusion::register_udf(&mut ctx);
     Ok(ctx)
 }
 

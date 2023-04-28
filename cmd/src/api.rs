@@ -12,9 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use axum::{extract::Query, response::Json};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::{
+    sync::Arc,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
+use axum::{
+    extract::{Query, State},
+    response::Json,
+};
+use datafusion::prelude::SessionContext;
 use promql_parser::parser;
 use serde::{Deserialize, Serialize};
 
@@ -51,7 +58,11 @@ pub async fn index() -> String {
     "Hello, World!".to_string()
 }
 
-pub async fn query(req: Query<QueryRequest>) -> Json<QueryResponse> {
+
+pub async fn query(
+    req: Query<QueryRequest>,
+    State(ctx): State<Arc<SessionContext>>,
+) -> Json<QueryResponse> {
     // let start_time = time::Instant::now();
 
     let prom_expr = match parser::parse(&req.query) {
@@ -87,8 +98,6 @@ pub async fn query(req: Query<QueryRequest>) -> Json<QueryResponse> {
         lookback_delta: Duration::from_secs(300),
     };
 
-    let ctx = super::CONTEXT.clone();
-    // tracing::info!("prepare time: {}", start_time.elapsed());
 
     let mut engine = newpromql::QueryEngine::new(ctx);
     let response = match engine.exec(eval_stmt).await {

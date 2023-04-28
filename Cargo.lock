@@ -2289,7 +2289,6 @@ dependencies = [
  "color-eyre",
  "datafusion",
  "newpromql",
- "once_cell",
  "promql-parser",
  "serde",
  "serde_json",
