@@ -7,8 +7,10 @@ license.workspace = true
 [dependencies]
 arrow.workspace = true
 async-recursion = "1.0"
+blake3 = "1.3"
 datafusion.workspace = true
-md5 = "0.7"
+hex = "0.4"
+itertools = "0.10"
 once_cell = "1.17"
 promql-parser = "0.1"
 regex = "1.7"

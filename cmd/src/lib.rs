@@ -157,7 +157,6 @@ fn create_record_batch(
             field_map.insert(k.to_string(), v.to_string());
         });
         let hash_value = value::signature(&field_map);
-        let hash_value = hash_value.as_str();
 
         for sample in &time_series.values {
             for field in schema.fields() {
@@ -181,7 +180,7 @@ fn create_record_batch(
             field_values
                 .entry(value::FIELD_HASH.to_string())
                 .or_default()
-                .push(hash_value.to_string());
+                .push(hash_value.clone().into());
             field_values
                 .entry(value::FIELD_TYPE.to_string())
                 .or_default()

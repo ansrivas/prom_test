@@ -61,7 +61,7 @@ pub(crate) fn eval_arithmetic(
                             Some(v) => v,
                             None => {
                                 return Err(DataFusionError::Internal(format!(
-                                    "label: [{label}] not exists"
+                                    "label not found: {label}"
                                 )))
                             }
                         };

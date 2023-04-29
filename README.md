@@ -73,20 +73,21 @@ zo_http_response_time_bucket{namespace="ziox-alpha1",organization="default"}[35m
 
 1. Run benchmarks
 
-```shell
-cargo bench
-```
+   ```shell
+   cargo bench
+   ```
 
-2. Install [`cargo-flamegraph`](https://github.com/flamegraph-rs/flamegraph):
+2. Install [`flamegraph`](https://github.com/flamegraph-rs/flamegraph) cargo subcommand
 
-```shell
-cargo install flamegraph
-```
+   ```shell
+   cargo install flamegraph
+   ```
 
-3. Generate `flamegraph.svg`:
+3. Generate `flamegraph.svg`
 
-```shell
-CARGO_PROFILE_BENCH_DEBUG=true cargo flamegraph --root --bench it
-```
+   ```shell
+   # NOTE: the last `--bench` is required for `criterion` to run in benchmark mode, instead of test mode
+   CARGO_PROFILE_BENCH_DEBUG=true cargo flamegraph --root --bench it -- --bench
+   ```
 
 4. Open `flamegraph.svg` in your browser.

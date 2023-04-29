@@ -8,7 +8,7 @@ use promql_parser::parser;
 use tokio::runtime::Runtime;
 
 fn bench_promql(c: &mut Criterion) {
-    let query = r#"zo_http_incoming_requests{namespace="ziox-alpha1",organization="default"}[35m]"#;
+    let query = r#"sum by(stream_type) (delta(zo_storage_files{namespace="ziox-alpha1",organization="default"}[5m]))"#;
 
     let samples_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../samples");
     let (start, end) = prom_test::load_timestamps(samples_dir).unwrap();
