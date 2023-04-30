@@ -152,7 +152,7 @@ fn create_record_batch(
     let mut value_field_values = Vec::new();
 
     for time_series in data {
-        let mut field_map = HashMap::new();
+        let mut field_map = rustc_hash::FxHashMap::default();
         time_series.metric.iter().for_each(|(k, v)| {
             field_map.insert(k.to_string(), v.to_string());
         });

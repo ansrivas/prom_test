@@ -1,7 +1,7 @@
 use datafusion::error::{DataFusionError, Result};
 use promql_parser::parser::Expr as PromExpr;
 use promql_parser::parser::LabelModifier;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use crate::value::{signature, Signature, Value};
 use crate::QueryEngine;
@@ -23,7 +23,7 @@ pub(crate) use sum::sum;
 pub(crate) use topk::topk;
 
 pub(crate) struct ArithmeticItem {
-    pub(crate) labels: HashMap<String, String>,
+    pub(crate) labels: FxHashMap<String, String>,
     pub(crate) value: f64,
     pub(crate) num: usize,
 }
@@ -39,7 +39,7 @@ pub(crate) fn eval_arithmetic(
     data: &Value,
     f_name: &str,
     f_handler: fn(total: f64, val: f64) -> f64,
-) -> Result<Option<HashMap<Signature, ArithmeticItem>>> {
+) -> Result<Option<FxHashMap<Signature, ArithmeticItem>>> {
     let data = match data {
         Value::Vector(v) => v,
         Value::None => return Ok(None),
@@ -50,12 +50,12 @@ pub(crate) fn eval_arithmetic(
         }
     };
 
-    let mut score_values = HashMap::new();
+    let mut score_values = FxHashMap::default();
     match param {
         Some(v) => match v {
             LabelModifier::Include(labels) => {
                 for item in data.iter() {
-                    let mut sum_labels = HashMap::new();
+                    let mut sum_labels = FxHashMap::default();
                     for label in labels {
                         let value = match item.metric.get(label) {
                             Some(v) => v,
@@ -79,7 +79,7 @@ pub(crate) fn eval_arithmetic(
             }
             LabelModifier::Exclude(labels) => {
                 for item in data.iter() {
-                    let mut sum_labels = HashMap::new();
+                    let mut sum_labels = FxHashMap::default();
                     for (label, value) in item.metric.iter() {
                         if !labels.contains(label) {
                             sum_labels.insert(label.clone(), value.clone());
@@ -101,7 +101,7 @@ pub(crate) fn eval_arithmetic(
                 let entry = score_values
                     .entry(Signature::default())
                     .or_insert(ArithmeticItem {
-                        labels: HashMap::new(),
+                        labels: FxHashMap::default(),
                         value: 0.0,
                         num: 0,
                     });

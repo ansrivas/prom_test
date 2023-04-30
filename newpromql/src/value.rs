@@ -1,9 +1,10 @@
 use itertools::Itertools;
+use rustc_hash::FxHashMap;
 use serde::{
     ser::{SerializeSeq, Serializer},
     Serialize,
 };
-use std::{cmp::Ordering, collections::HashMap};
+use std::cmp::Ordering;
 
 pub const FIELD_HASH: &str = "__hash__";
 pub const FIELD_NAME: &str = "__name__";
@@ -17,7 +18,7 @@ pub const TYPE_GAUGE: &str = "gauge";
 pub const TYPE_HISTOGRAM: &str = "histogram";
 pub const TYPE_SUMMARY: &str = "summary";
 
-pub type Metric = HashMap<String, String>;
+pub type Metric = FxHashMap<String, String>;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Sample {
@@ -188,12 +189,11 @@ mod tests {
 
     #[test]
     fn test_signature_without_labels() {
-        let metric = Metric::from([
-            ("a".to_owned(), "1".to_owned()),
-            ("b".to_owned(), "2".to_owned()),
-            ("c".to_owned(), "3".to_owned()),
-            ("d".to_owned(), "4".to_owned()),
-        ]);
+        let mut metric = FxHashMap::default();
+        metric.insert("a".to_owned(), "1".to_owned());
+        metric.insert("b".to_owned(), "2".to_owned());
+        metric.insert("c".to_owned(), "3".to_owned());
+        metric.insert("d".to_owned(), "4".to_owned());
 
         let sig = signature(&metric);
         expect![[r#"

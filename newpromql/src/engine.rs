@@ -12,6 +12,7 @@ use promql_parser::{
         VectorSelector,
     },
 };
+use rustc_hash::FxHashMap;
 use std::{
     collections::HashMap,
     str::FromStr,
@@ -100,12 +101,12 @@ impl QueryEngine {
                     .iter()
                     .for_each(|item| instant_vectors.push(item.to_owned())),
                 Value::Sample(v) => instant_vectors.push(RangeValue {
-                    metric: HashMap::new(),
+                    metric: Metric::default(),
                     time: None,
                     values: vec![v],
                 }),
                 Value::Float(v) => instant_vectors.push(RangeValue {
-                    metric: HashMap::new(),
+                    metric: Metric::default(),
                     time: None,
                     values: vec![Sample {
                         timestamp: self.start + (self.interval * self.time_window_idx),
@@ -252,7 +253,7 @@ impl QueryEngine {
         let end = self.start + (self.interval * self.time_window_idx); // 15s
         let start = end - micros(range); // 5m
 
-        let mut values = vec![];
+        let mut values = Vec::with_capacity(cache_data.len());
         for metric in cache_data {
             let metric_data = metric
                 .values
@@ -331,7 +332,7 @@ impl QueryEngine {
             .map(|row| {
                 row.iter()
                     .map(|(k, v)| (k.to_owned(), v.as_str().unwrap().to_owned()))
-                    .collect::<HashMap<_, _>>()
+                    .collect::<FxHashMap<_, _>>()
             })
             .collect::<Vec<_>>();
 
@@ -366,8 +367,7 @@ impl QueryEngine {
         df_data = df_data.select(vec![col(FIELD_HASH), col(FIELD_TIME), col(FIELD_VALUE)])?;
         let metric_data = df_data.collect().await?;
         let metric_data = arrowJson::writer::record_batches_to_json_rows(&metric_data)?;
-        let mut metric_data_group: HashMap<String, Vec<Sample>> =
-            HashMap::with_capacity(metrics.len());
+        let mut metric_data_group: FxHashMap<String, Vec<Sample>> = FxHashMap::default();
         metric_data.iter().for_each(|row| {
             let hash_value = row.get(FIELD_HASH).unwrap().as_str().unwrap().to_owned();
             let entry = metric_data_group.entry(hash_value).or_default();
