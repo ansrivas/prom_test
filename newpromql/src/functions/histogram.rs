@@ -1,6 +1,5 @@
-use std::collections::HashMap;
-
 use datafusion::error::{DataFusionError, Result};
+use rustc_hash::FxHashMap;
 
 use crate::value::{self, InstantValue, Metric, Signature, Value};
 
@@ -31,7 +30,7 @@ pub(crate) fn histogram_quantile(sample_time: i64, phi: f64, data: Value) -> Res
         }
     };
 
-    let mut metrics_with_buckets: HashMap<Signature, MetricWithBuckets> = HashMap::new();
+    let mut metrics_with_buckets: FxHashMap<Signature, MetricWithBuckets> = FxHashMap::default();
     for InstantValue {
         mut metric,
         value: sample,

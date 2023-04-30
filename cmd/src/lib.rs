@@ -1,11 +1,3 @@
-use std::{
-    collections::{HashMap, HashSet},
-    fs,
-    path::Path,
-    sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
-};
-
 use arrow_array::{ArrayRef, Float64Array};
 use color_eyre::eyre::{eyre, Result, WrapErr};
 use datafusion::{
@@ -17,7 +9,14 @@ use datafusion::{
     datasource::MemTable,
     prelude::SessionContext,
 };
+use rustc_hash::{FxHashMap, FxHashSet};
 use serde::{Deserialize, Serialize};
+use std::{
+    fs,
+    path::Path,
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use newpromql::value;
 
@@ -109,7 +108,7 @@ fn create_table_by_file<P: AsRef<Path>>(ctx: &SessionContext, path: P) -> Result
 }
 
 fn create_schema_from_record(data: &[TimeSeries]) -> Schema {
-    let mut fields_map = HashSet::new();
+    let mut fields_map = FxHashSet::default();
     let mut fields = Vec::new();
     for row in data {
         row.metric.keys().for_each(|k| {
@@ -147,12 +146,12 @@ fn create_record_batch(
     schema: Arc<Schema>,
     data: &[TimeSeries],
 ) -> Result<RecordBatch> {
-    let mut field_values = HashMap::<_, Vec<_>>::new();
+    let mut field_values = FxHashMap::<_, Vec<_>>::default();
     let mut time_field_values = Vec::new();
     let mut value_field_values = Vec::new();
 
     for time_series in data {
-        let mut field_map = rustc_hash::FxHashMap::default();
+        let mut field_map = FxHashMap::default();
         time_series.metric.iter().for_each(|(k, v)| {
             field_map.insert(k.to_string(), v.to_string());
         });

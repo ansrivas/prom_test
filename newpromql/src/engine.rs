@@ -14,7 +14,6 @@ use promql_parser::{
 };
 use rustc_hash::FxHashMap;
 use std::{
-    collections::HashMap,
     str::FromStr,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -36,7 +35,7 @@ pub struct QueryEngine {
     ///
     /// [range query]: https://promlabs.com/blog/2020/06/18/the-anatomy-of-a-promql-query/#range-queries
     time_window_idx: i64,
-    data_cache: Arc<HashMap<String, Value>>,
+    data_cache: Arc<FxHashMap<String, Value>>,
 }
 
 impl QueryEngine {
@@ -50,7 +49,7 @@ impl QueryEngine {
             interval: five_min,
             lookback_delta: five_min,
             time_window_idx: 0,
-            data_cache: Arc::new(HashMap::new()),
+            data_cache: Arc::new(FxHashMap::default()),
         }
     }
 
@@ -123,8 +122,8 @@ impl QueryEngine {
         }
 
         // merge data
-        let mut merged_data = HashMap::new();
-        let mut merged_metrics = HashMap::new();
+        let mut merged_data = FxHashMap::default();
+        let mut merged_metrics = FxHashMap::default();
         for value in instant_vectors {
             let entry = merged_data
                 .entry(signature(&value.metric))
