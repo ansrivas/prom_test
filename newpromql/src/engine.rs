@@ -2,7 +2,7 @@ use async_recursion::async_recursion;
 use datafusion::{
     arrow::json as arrowJson,
     error::{DataFusionError, Result},
-    prelude::{col, lit, min, SessionContext},
+    prelude::{col, lit, SessionContext},
 };
 use promql_parser::{
     label::MatchOp,
@@ -274,8 +274,10 @@ impl QueryEngine {
         selector: &VectorSelector,
         range: Option<Duration>,
     ) -> Result<()> {
+        tracing::info!("selector_load_data: start");
         let table_name = selector.name.as_ref().unwrap();
-        let table = self.ctx.table(table_name).await?;
+        let metric_table_name = format!("{}_labels", table_name);
+        let table = self.ctx.table(metric_table_name).await?;
 
         let start = {
             // https://promlabs.com/blog/2020/07/02/selecting-data-in-promql/#lookback-delta
@@ -285,11 +287,7 @@ impl QueryEngine {
         let end = self.end; // 30 minutes + 5m = 35m
 
         // 1. Group by metrics (sets of label name-value pairs)
-        let mut df_group = table.clone().filter(
-            col(FIELD_TIME)
-                .gt(lit(start))
-                .and(col(FIELD_TIME).lt_eq(lit(end))),
-        )?;
+        let mut df_group = table.clone();
         let regexp_match_udf = super::datafusion::regexp_udf::REGEX_MATCH_UDF.clone();
         let regexp_not_match_udf = super::datafusion::regexp_udf::REGEX_NOT_MATCH_UDF.clone();
         for mat in selector.matchers.matchers.iter() {
@@ -314,20 +312,12 @@ impl QueryEngine {
                 }
             }
         }
-        let group_select = table
-            .schema()
-            .fields()
-            .iter()
-            .map(datafusion::common::DFField::name)
-            .filter(|&field_name| {
-                field_name != FIELD_HASH && field_name != FIELD_TIME && field_name != FIELD_VALUE
-            })
-            .map(|v| min(col(v)).alias(v))
-            .collect::<Vec<_>>();
-        df_group = df_group.aggregate(vec![col(FIELD_HASH)], group_select)?;
+        tracing::info!("selector_load_data: loaded metrics 0");
         let group_data = df_group.collect().await?;
+        tracing::info!("selector_load_data: loaded metrics 1");
         let metrics = arrowJson::writer::record_batches_to_json_rows(&group_data)?;
-        let metrics = metrics
+        tracing::info!("selector_load_data: loaded metrics 2");
+        let mut metrics = metrics
             .iter()
             .map(|row| {
                 row.iter()
@@ -341,66 +331,48 @@ impl QueryEngine {
             })
             .map(|mut v| {
                 v.sort_by(|a, b| a.name.cmp(&b.name));
-                v
+                let hash = v
+                    .iter()
+                    .find(|x| x.name == FIELD_HASH)
+                    .unwrap()
+                    .value
+                    .clone();
+                (
+                    hash,
+                    RangeValue {
+                        labels: v,
+                        time_range: None,
+                        values: Vec::with_capacity(20),
+                    },
+                )
             })
-            .collect::<Vec<_>>();
+            .collect::<FxHashMap<_, _>>();
+        tracing::info!("selector_load_data: loaded metrics 3, {}", metrics.len());
 
         // 2. Fetch all samples and then group by metrics
-        let mut df_data = table.clone().filter(
+        let values_table_name = format!("{}_values", table_name);
+        let table = self.ctx.table(values_table_name).await?;
+        let mut df_data = table.filter(
             col(FIELD_TIME)
                 .gt(lit(start))
                 .and(col(FIELD_TIME).lt_eq(lit(end))),
         )?;
-        for mat in selector.matchers.matchers.iter() {
-            match &mat.op {
-                MatchOp::Equal => {
-                    df_data = df_data.filter(col(mat.name.clone()).eq(lit(mat.value.clone())))?
-                }
-                MatchOp::NotEqual => {
-                    df_data =
-                        df_data.filter(col(mat.name.clone()).not_eq(lit(mat.value.clone())))?
-                }
-                MatchOp::Re(_re) => {
-                    df_data = df_data.filter(
-                        regexp_match_udf.call(vec![col(mat.name.clone()), lit(mat.value.clone())]),
-                    )?
-                }
-                MatchOp::NotRe(_re) => {
-                    df_data = df_data.filter(
-                        regexp_not_match_udf
-                            .call(vec![col(mat.name.clone()), lit(mat.value.clone())]),
-                    )?
-                }
-            }
-        }
         df_data = df_data.select(vec![col(FIELD_HASH), col(FIELD_TIME), col(FIELD_VALUE)])?;
         let metric_data = df_data.collect().await?;
         let metric_data = arrowJson::writer::record_batches_to_json_rows(&metric_data)?;
-        let mut metric_data_group: FxHashMap<String, Vec<Sample>> = FxHashMap::default();
+        tracing::info!("selector_load_data: loaded values");
         metric_data.iter().for_each(|row| {
             let hash_value = row.get(FIELD_HASH).unwrap().as_str().unwrap().to_owned();
-            let entry = metric_data_group.entry(hash_value).or_default();
-            entry.push(Sample {
-                timestamp: row.get(FIELD_TIME).unwrap().as_i64().unwrap(),
-                value: row.get(FIELD_VALUE).unwrap().as_f64().unwrap(),
-            });
+            let entry = metrics.get_mut(&hash_value);
+            if let Some(entry) = entry {
+                entry.values.push(Sample {
+                    timestamp: row.get(FIELD_TIME).unwrap().as_i64().unwrap(),
+                    value: row.get(FIELD_VALUE).unwrap().as_f64().unwrap(),
+                });
+            }
         });
-
-        let mut metric_values = Vec::with_capacity(metrics.len());
-        for metric in metrics {
-            let hash_value = metric
-                .iter()
-                .find(|v| v.name == FIELD_HASH)
-                .unwrap()
-                .value
-                .clone();
-            let metric_data = metric_data_group.get(&hash_value).unwrap();
-            metric_values.push(RangeValue {
-                labels: metric.clone(),
-                time_range: None,
-                values: metric_data.clone(),
-            });
-        }
+        let mut metric_values = metrics.values().map(|v| v.to_owned()).collect::<Vec<_>>();
+        tracing::info!("selector_load_data: loaded partiton metrics");
 
         // Fix data about app restart
         for metric in metric_values.iter_mut() {
@@ -435,6 +407,7 @@ impl QueryEngine {
         };
         let cache = Arc::get_mut(&mut self.data_cache).unwrap();
         cache.insert(table_name.to_string(), values);
+        tracing::info!("selector_load_data: loaded cache");
         Ok(())
     }
 

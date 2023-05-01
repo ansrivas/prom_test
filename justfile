@@ -1,5 +1,8 @@
 set dotenv-load
 
+bench:
+    CARGO_PROFILE_BENCH_DEBUG=true cargo flamegraph --root --bench it -- --bench
+
 docker-build push='false':
     #!/usr/bin/env bash
     set -eu -o pipefail
