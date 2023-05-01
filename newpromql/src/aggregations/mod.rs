@@ -3,7 +3,7 @@ use promql_parser::parser::Expr as PromExpr;
 use promql_parser::parser::LabelModifier;
 use rustc_hash::FxHashMap;
 
-use crate::value::{signature, Signature, Value};
+use crate::value::{signature, Labels, Signature, Value};
 use crate::QueryEngine;
 
 mod avg;
@@ -23,7 +23,7 @@ pub(crate) use sum::sum;
 pub(crate) use topk::topk;
 
 pub(crate) struct ArithmeticItem {
-    pub(crate) labels: FxHashMap<String, String>,
+    pub(crate) labels: Labels,
     pub(crate) value: f64,
     pub(crate) num: usize,
 }
@@ -55,17 +55,11 @@ pub(crate) fn eval_arithmetic(
         Some(v) => match v {
             LabelModifier::Include(labels) => {
                 for item in data.iter() {
-                    let mut sum_labels = FxHashMap::default();
-                    for label in labels {
-                        let value = match item.metric.get(label) {
-                            Some(v) => v,
-                            None => {
-                                return Err(DataFusionError::Internal(format!(
-                                    "label not found: {label}"
-                                )))
-                            }
-                        };
-                        sum_labels.insert(label.clone(), value.clone());
+                    let mut sum_labels = Labels::default();
+                    for label in item.labels.iter() {
+                        if labels.contains(&label.name) {
+                            sum_labels.push(label.clone());
+                        }
                     }
                     let sum_hash = signature(&sum_labels);
                     let entry = score_values.entry(sum_hash).or_insert(ArithmeticItem {
@@ -79,10 +73,10 @@ pub(crate) fn eval_arithmetic(
             }
             LabelModifier::Exclude(labels) => {
                 for item in data.iter() {
-                    let mut sum_labels = FxHashMap::default();
-                    for (label, value) in item.metric.iter() {
-                        if !labels.contains(label) {
-                            sum_labels.insert(label.clone(), value.clone());
+                    let mut sum_labels = Labels::default();
+                    for label in item.labels.iter() {
+                        if !labels.contains(&label.name) {
+                            sum_labels.push(label.clone());
                         }
                     }
                     let sum_hash = signature(&sum_labels);
@@ -101,7 +95,7 @@ pub(crate) fn eval_arithmetic(
                 let entry = score_values
                     .entry(Signature::default())
                     .or_insert(ArithmeticItem {
-                        labels: FxHashMap::default(),
+                        labels: Labels::default(),
                         value: 0.0,
                         num: 0,
                     });

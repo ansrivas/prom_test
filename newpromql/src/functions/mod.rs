@@ -104,9 +104,9 @@ pub(crate) fn eval_idelta(
         .map(|metric| {
             let value = fn_handler(metric);
             InstantValue {
-                metric: metric.metric.clone(),
+                labels: metric.labels.clone(),
                 value: Sample {
-                    timestamp: metric.time.unwrap().1,
+                    timestamp: metric.time_range.unwrap().1,
                     value,
                 },
             }

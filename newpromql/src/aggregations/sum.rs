@@ -12,7 +12,7 @@ pub fn sum(timestamp: i64, param: &Option<LabelModifier>, data: &Value) -> Resul
         .unwrap()
         .values()
         .map(|v| InstantValue {
-            metric: v.labels.clone(),
+            labels: v.labels.clone(),
             value: Sample {
                 timestamp,
                 value: v.value,

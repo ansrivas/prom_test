@@ -1,7 +1,7 @@
 use datafusion::error::{DataFusionError, Result};
 use rustc_hash::FxHashMap;
 
-use crate::value::{self, InstantValue, Metric, Signature, Value};
+use crate::value::{self, InstantValue, Labels, Signature, Value};
 
 // https://github.com/prometheus/prometheus/blob/cf1bea344a3c390a90c35ea8764c4a468b345d5e/promql/quantile.go#L33
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -13,7 +13,7 @@ struct Bucket {
 // https://github.com/prometheus/prometheus/blob/cf1bea344a3c390a90c35ea8764c4a468b345d5e/promql/quantile.go#L45
 #[derive(Debug)]
 struct MetricWithBuckets {
-    metric: Metric,
+    labels: Labels,
     buckets: Vec<Bucket>,
 }
 
@@ -32,7 +32,7 @@ pub(crate) fn histogram_quantile(sample_time: i64, phi: f64, data: Value) -> Res
 
     let mut metrics_with_buckets: FxHashMap<Signature, MetricWithBuckets> = FxHashMap::default();
     for InstantValue {
-        mut metric,
+        mut labels,
         value: sample,
     } in in_vec
     {
@@ -43,21 +43,27 @@ pub(crate) fn histogram_quantile(sample_time: i64, phi: f64, data: Value) -> Res
         // histograms. Each float sample must have a label `le` where the label
         // value denotes the inclusive upper bound of the bucket. *Float samples
         // without such a label are silently ignored.*
-        let upper_bound: f64 = match metric.get("le").map(|s| s.parse()) {
+        let upper_bound: f64 = match labels
+            .iter()
+            .find(|v| v.name == "le")
+            .map(|s| s.value.parse())
+        {
             Some(Ok(u)) => u,
             None | Some(Err(_)) => continue,
         };
 
         let sig = value::signature_without_labels(
-            &metric,
+            &labels,
             &[value::FIELD_HASH, value::FIELD_NAME, value::FIELD_BUCKET],
         );
         let entry = metrics_with_buckets.entry(sig).or_insert_with(|| {
-            metric.remove(value::FIELD_HASH);
-            metric.remove(value::FIELD_NAME);
-            metric.remove(value::FIELD_BUCKET);
+            labels.retain(|l| {
+                l.name != value::FIELD_HASH
+                    || l.name != value::FIELD_NAME
+                    || l.name != value::FIELD_BUCKET
+            });
             MetricWithBuckets {
-                metric,
+                labels,
                 buckets: Vec::new(),
             }
         });
@@ -70,7 +76,7 @@ pub(crate) fn histogram_quantile(sample_time: i64, phi: f64, data: Value) -> Res
     let values = metrics_with_buckets
         .into_values()
         .map(|mb| value::InstantValue {
-            metric: mb.metric,
+            labels: mb.labels,
             value: value::Sample {
                 timestamp: sample_time,
                 value: bucket_quantile(phi, mb.buckets),

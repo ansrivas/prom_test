@@ -84,14 +84,14 @@ impl QueryEngine {
             self.time_window_idx = i;
             match self.exec_expr(&stmt.expr).await? {
                 Value::Instant(v) => instant_vectors.push(RangeValue {
-                    metric: v.metric.to_owned(),
-                    time: None,
+                    labels: v.labels.to_owned(),
+                    time_range: None,
                     values: vec![v.value],
                 }),
                 Value::Vector(v) => v.iter().for_each(|item| {
                     instant_vectors.push(RangeValue {
-                        metric: item.metric.to_owned(),
-                        time: None,
+                        labels: item.labels.to_owned(),
+                        time_range: None,
                         values: vec![item.value],
                     })
                 }),
@@ -100,13 +100,13 @@ impl QueryEngine {
                     .iter()
                     .for_each(|item| instant_vectors.push(item.to_owned())),
                 Value::Sample(v) => instant_vectors.push(RangeValue {
-                    metric: Metric::default(),
-                    time: None,
+                    labels: Labels::default(),
+                    time_range: None,
                     values: vec![v],
                 }),
                 Value::Float(v) => instant_vectors.push(RangeValue {
-                    metric: Metric::default(),
-                    time: None,
+                    labels: Labels::default(),
+                    time_range: None,
                     values: vec![Sample {
                         timestamp: self.start + (self.interval * self.time_window_idx),
                         value: v,
@@ -126,19 +126,19 @@ impl QueryEngine {
         let mut merged_metrics = FxHashMap::default();
         for value in instant_vectors {
             let entry = merged_data
-                .entry(signature(&value.metric))
+                .entry(signature(&value.labels))
                 .or_insert_with(Vec::new);
             value
                 .values
                 .iter()
                 .for_each(|item| entry.push(item.to_owned()));
-            merged_metrics.insert(signature(&value.metric), value.metric);
+            merged_metrics.insert(signature(&value.labels), value.labels);
         }
         let merged_data = merged_data
             .into_iter()
-            .map(|(metric, values)| RangeValue {
-                metric: merged_metrics.get(&metric).unwrap().to_owned(),
-                time: None,
+            .map(|(sig, values)| RangeValue {
+                labels: merged_metrics.get(&sig).unwrap().to_owned(),
+                time_range: None,
                 values,
             })
             .collect::<Vec<_>>();
@@ -223,7 +223,7 @@ impl QueryEngine {
                 //
                 // See https://promlabs.com/blog/2020/06/18/the-anatomy-of-a-promql-query/#instant-queries
                 InstantValue {
-                    metric: metric.metric.clone(),
+                    labels: metric.labels.clone(),
                     value,
                 },
             );
@@ -261,8 +261,8 @@ impl QueryEngine {
                 .cloned()
                 .collect::<Vec<_>>();
             values.push(RangeValue {
-                metric: metric.metric.clone(),
-                time: Some((start, end)),
+                labels: metric.labels.clone(),
+                time_range: Some((start, end)),
                 values: metric_data,
             });
         }
@@ -326,12 +326,22 @@ impl QueryEngine {
             .collect::<Vec<_>>();
         df_group = df_group.aggregate(vec![col(FIELD_HASH)], group_select)?;
         let group_data = df_group.collect().await?;
-        let metrics = arrowJson::writer::record_batches_to_json_rows(&group_data)?
+        let metrics = arrowJson::writer::record_batches_to_json_rows(&group_data)?;
+        let metrics = metrics
             .iter()
             .map(|row| {
                 row.iter()
-                    .map(|(k, v)| (k.to_owned(), v.as_str().unwrap().to_owned()))
-                    .collect::<FxHashMap<_, _>>()
+                    .map(|(k, v)| {
+                        Arc::new(Label {
+                            name: k.to_owned(),
+                            value: v.as_str().unwrap().to_owned(),
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .map(|mut v| {
+                v.sort_by(|a, b| a.name.cmp(&b.name));
+                v
             })
             .collect::<Vec<_>>();
 
@@ -378,18 +388,30 @@ impl QueryEngine {
 
         let mut metric_values = Vec::with_capacity(metrics.len());
         for metric in metrics {
-            let hash_value = metric.get(FIELD_HASH).unwrap().as_str();
-            let metric_data = metric_data_group.get(hash_value).unwrap();
+            let hash_value = metric
+                .iter()
+                .find(|v| v.name == FIELD_HASH)
+                .unwrap()
+                .value
+                .clone();
+            let metric_data = metric_data_group.get(&hash_value).unwrap();
             metric_values.push(RangeValue {
-                metric,
-                time: None,
+                labels: metric.clone(),
+                time_range: None,
                 values: metric_data.clone(),
             });
         }
 
         // Fix data about app restart
         for metric in metric_values.iter_mut() {
-            if metric.metric.get(FIELD_TYPE).unwrap().as_str() != TYPE_COUNTER {
+            let metric_type = metric
+                .labels
+                .iter()
+                .find(|v| v.name == FIELD_TYPE)
+                .unwrap()
+                .value
+                .clone();
+            if metric_type != TYPE_COUNTER {
                 continue;
             }
             let mut delta: f64 = 0.0;

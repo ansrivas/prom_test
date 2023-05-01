@@ -151,10 +151,14 @@ fn create_record_batch(
     let mut value_field_values = Vec::new();
 
     for time_series in data {
-        let mut field_map = FxHashMap::default();
+        let mut field_map = Vec::with_capacity(time_series.metric.len());
         time_series.metric.iter().for_each(|(k, v)| {
-            field_map.insert(k.to_string(), v.to_string());
+            field_map.push(Arc::new(value::Label {
+                name: k.to_string(),
+                value: v.to_string(),
+            }));
         });
+        field_map.sort_by(|a, b| a.name.cmp(&b.name));
         let hash_value = value::signature(&field_map);
 
         for sample in &time_series.values {

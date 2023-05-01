@@ -1,10 +1,9 @@
-use itertools::Itertools;
 use rustc_hash::FxHashMap;
 use serde::{
-    ser::{SerializeSeq, Serializer},
+    ser::{SerializeSeq, SerializeStruct, Serializer},
     Serialize,
 };
-use std::cmp::Ordering;
+use std::{cmp::Ordering, sync::Arc};
 
 pub const FIELD_HASH: &str = "__hash__";
 pub const FIELD_NAME: &str = "__name__";
@@ -18,7 +17,13 @@ pub const TYPE_GAUGE: &str = "gauge";
 pub const TYPE_HISTOGRAM: &str = "histogram";
 pub const TYPE_SUMMARY: &str = "summary";
 
-pub type Metric = FxHashMap<String, String>;
+pub type Labels = Vec<Arc<Label>>;
+
+#[derive(Debug, Clone)]
+pub struct Label {
+    pub name: String,
+    pub value: String,
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct Sample {
@@ -39,18 +44,51 @@ impl Serialize for Sample {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
 pub struct InstantValue {
-    pub metric: Metric,
+    pub labels: Labels,
     pub value: Sample,
 }
 
-#[derive(Debug, Clone, Serialize)]
+impl Serialize for InstantValue {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut seq = serializer.serialize_struct("instant_value", 2)?;
+        let labels_map = self
+            .labels
+            .iter()
+            .map(|l| (l.name.as_str(), l.value.as_str()))
+            .collect::<FxHashMap<_, _>>();
+        seq.serialize_field("metric", &labels_map)?;
+        seq.serialize_field("value", &self.value)?;
+        seq.end()
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct RangeValue {
-    pub metric: Metric,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub time: Option<(i64, i64)>,
+    pub labels: Labels,
+    pub time_range: Option<(i64, i64)>, // start, end
     pub values: Vec<Sample>,
+}
+
+impl Serialize for RangeValue {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut seq = serializer.serialize_struct("range_value", 2)?;
+        let labels_map = self
+            .labels
+            .iter()
+            .map(|l| (l.name.as_str(), l.value.as_str()))
+            .collect::<FxHashMap<_, _>>();
+        seq.serialize_field("metric", &labels_map)?;
+        seq.serialize_field("values", &self.values)?;
+        seq.end()
+    }
 }
 
 impl RangeValue {
@@ -66,7 +104,7 @@ impl RangeValue {
         let first = samples.first().unwrap();
         let last = samples.last().unwrap();
 
-        let (t_start, t_end) = self.time.unwrap();
+        let (t_start, t_end) = self.time_range.unwrap();
         assert!(t_start < t_end);
         assert!(t_start <= first.timestamp);
         assert!(first.timestamp <= last.timestamp);
@@ -163,21 +201,20 @@ impl From<Signature> for String {
 }
 
 // REFACTORME: make this a method of `Metric`
-pub fn signature(metric: &Metric) -> Signature {
-    signature_without_labels(metric, &[])
+pub fn signature(labels: &Labels) -> Signature {
+    signature_without_labels(labels, &[])
 }
 
 /// `signature_without_labels` is just as [`signature`], but only for labels not matching `names`.
 // REFACTORME: make this a method of `Metric`
-pub fn signature_without_labels(metric: &Metric, exclude_names: &[&str]) -> Signature {
+pub fn signature_without_labels(labels: &Labels, exclude_names: &[&str]) -> Signature {
     let mut hasher = blake3::Hasher::new();
-    metric
+    labels
         .iter()
-        .filter(|(k, _)| !exclude_names.contains(&k.as_str()))
-        .sorted_unstable_by_key(|(k, _)| k.as_str())
-        .for_each(|(k, v)| {
-            hasher.update(k.as_bytes());
-            hasher.update(v.as_bytes());
+        .filter(|item| !exclude_names.contains(&item.name.as_str()))
+        .for_each(|item| {
+            hasher.update(item.name.as_bytes());
+            hasher.update(item.value.as_bytes());
         });
     Signature(hasher.finalize().into())
 }
@@ -189,26 +226,38 @@ mod tests {
 
     #[test]
     fn test_signature_without_labels() {
-        let mut metric = FxHashMap::default();
-        metric.insert("a".to_owned(), "1".to_owned());
-        metric.insert("b".to_owned(), "2".to_owned());
-        metric.insert("c".to_owned(), "3".to_owned());
-        metric.insert("d".to_owned(), "4".to_owned());
+        let mut labels: Labels = Default::default();
+        labels.push(Arc::new(Label {
+            name: "a".to_owned(),
+            value: "1".to_owned(),
+        }));
+        labels.push(Arc::new(Label {
+            name: "b".to_owned(),
+            value: "2".to_owned(),
+        }));
+        labels.push(Arc::new(Label {
+            name: "c".to_owned(),
+            value: "3".to_owned(),
+        }));
+        labels.push(Arc::new(Label {
+            name: "d".to_owned(),
+            value: "4".to_owned(),
+        }));
 
-        let sig = signature(&metric);
+        let sig = signature(&labels);
         expect![[r#"
             "f287fde2994111abd7740b5c7c28b0eeabe3f813ae65397bb6acb684e2ab6b22"
         "#]]
         .assert_debug_eq(&String::from(sig));
 
-        let sig: String = signature_without_labels(&metric, &["a", "c"]).into();
+        let sig: String = signature_without_labels(&labels, &["a", "c"]).into();
         expect![[r#"
             "ec9c3a0c9c03420d330ab62021551cffe993c07b20189c5ed831dad22f54c0c7"
         "#]]
         .assert_debug_eq(&sig);
         assert_eq!(sig.len(), 64);
 
-        assert_eq!(signature(&metric), signature_without_labels(&metric, &[]));
+        assert_eq!(signature(&labels), signature_without_labels(&labels, &[]));
     }
 
     #[test]
