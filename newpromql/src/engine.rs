@@ -35,7 +35,7 @@ pub struct QueryEngine {
     ///
     /// [range query]: https://promlabs.com/blog/2020/06/18/the-anatomy-of-a-promql-query/#range-queries
     time_window_idx: i64,
-    data_cache: Arc<FxHashMap<String, Value>>,
+    data_cache: FxHashMap<String, Value>,
 }
 
 impl QueryEngine {
@@ -49,7 +49,7 @@ impl QueryEngine {
             interval: five_min,
             lookback_delta: five_min,
             time_window_idx: 0,
-            data_cache: Arc::new(FxHashMap::default()),
+            data_cache: FxHashMap::default(),
         }
     }
 
@@ -88,17 +88,13 @@ impl QueryEngine {
                     time_range: None,
                     values: vec![v.value],
                 }),
-                Value::Vector(v) => v.iter().for_each(|item| {
-                    instant_vectors.push(RangeValue {
-                        labels: item.labels.to_owned(),
-                        time_range: None,
-                        values: vec![item.value],
-                    })
-                }),
+                Value::Vector(vs) => instant_vectors.extend(vs.into_iter().map(|v| RangeValue {
+                    labels: v.labels.to_owned(),
+                    time_range: None,
+                    values: vec![v.value],
+                })),
                 Value::Range(v) => instant_vectors.push(v),
-                Value::Matrix(v) => v
-                    .iter()
-                    .for_each(|item| instant_vectors.push(item.to_owned())),
+                Value::Matrix(v) => instant_vectors.extend(v),
                 Value::Sample(v) => instant_vectors.push(RangeValue {
                     labels: Labels::default(),
                     time_range: None,
@@ -125,13 +121,10 @@ impl QueryEngine {
         let mut merged_data = FxHashMap::default();
         let mut merged_metrics = FxHashMap::default();
         for value in instant_vectors {
-            let entry = merged_data
+            merged_data
                 .entry(signature(&value.labels))
-                .or_insert_with(Vec::new);
-            value
-                .values
-                .iter()
-                .for_each(|item| entry.push(item.to_owned()));
+                .or_insert_with(Vec::new)
+                .extend(value.values);
             merged_metrics.insert(signature(&value.labels), value.labels);
         }
         let merged_data = merged_data
@@ -317,21 +310,21 @@ impl QueryEngine {
         tracing::info!("selector_load_data: loaded metrics 1");
         let metrics = arrowJson::writer::record_batches_to_json_rows(&group_data)?;
         tracing::info!("selector_load_data: loaded metrics 2");
+        // key — the value of FIELD_HASH column; value — time series (`RangeValue`)
         let mut metrics = metrics
             .iter()
             .map(|row| {
-                row.iter()
+                let mut labels = row
+                    .iter()
                     .map(|(k, v)| {
                         Arc::new(Label {
                             name: k.to_owned(),
                             value: v.as_str().unwrap().to_owned(),
                         })
                     })
-                    .collect::<Vec<_>>()
-            })
-            .map(|mut v| {
-                v.sort_by(|a, b| a.name.cmp(&b.name));
-                let hash = v
+                    .collect::<Vec<_>>();
+                labels.sort_by(|a, b| a.name.cmp(&b.name));
+                let hash = labels
                     .iter()
                     .find(|x| x.name == FIELD_HASH)
                     .unwrap()
@@ -340,8 +333,9 @@ impl QueryEngine {
                 (
                     hash,
                     RangeValue {
-                        labels: v,
+                        labels,
                         time_range: None,
+                        // the vector of samples will be filled later
                         values: Vec::with_capacity(20),
                     },
                 )
@@ -361,17 +355,16 @@ impl QueryEngine {
         let metric_data = df_data.collect().await?;
         let metric_data = arrowJson::writer::record_batches_to_json_rows(&metric_data)?;
         tracing::info!("selector_load_data: loaded values");
-        metric_data.iter().for_each(|row| {
-            let hash_value = row.get(FIELD_HASH).unwrap().as_str().unwrap().to_owned();
-            let entry = metrics.get_mut(&hash_value);
-            if let Some(entry) = entry {
-                entry.values.push(Sample {
-                    timestamp: row.get(FIELD_TIME).unwrap().as_i64().unwrap(),
-                    value: row.get(FIELD_VALUE).unwrap().as_f64().unwrap(),
-                });
-            }
-        });
-        let mut metric_values = metrics.values().map(|v| v.to_owned()).collect::<Vec<_>>();
+        for row in metric_data {
+            let hash = row.get(FIELD_HASH).unwrap().as_str().unwrap().to_owned();
+            // `FIELD_HASH` is a primary key, so we can safely unwrap
+            metrics.get_mut(&hash).unwrap().values.push(Sample {
+                timestamp: row.get(FIELD_TIME).unwrap().as_i64().unwrap(),
+                value: row.get(FIELD_VALUE).unwrap().as_f64().unwrap(),
+            });
+        }
+        // We don't need the primary key (FIELD_HASH) any more
+        let mut metric_values = metrics.into_values().collect::<Vec<_>>();
         tracing::info!("selector_load_data: loaded partiton metrics");
 
         // Fix data about app restart
@@ -405,8 +398,7 @@ impl QueryEngine {
         } else {
             Value::Matrix(metric_values)
         };
-        let cache = Arc::get_mut(&mut self.data_cache).unwrap();
-        cache.insert(table_name.to_string(), values);
+        self.data_cache.insert(table_name.to_string(), values);
         tracing::info!("selector_load_data: loaded cache");
         Ok(())
     }

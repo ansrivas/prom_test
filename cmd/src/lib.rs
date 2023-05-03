@@ -33,14 +33,15 @@ struct Response {
 #[serde(rename_all = "camelCase")]
 struct ResponseData {
     result_type: String,
-    result: Vec<TimeSeries>,
+    result: Vec<Series>,
 }
 
 /// See https://docs.victoriametrics.com/keyConcepts.html#time-series
 #[derive(Debug, Serialize, Deserialize)]
-struct TimeSeries {
+struct Series {
     metric: serde_json::Map<String, serde_json::Value>,
-    values: Vec<Sample>,
+    #[serde(rename = "values")]
+    samples: Vec<Sample>,
 }
 
 /// See https://docs.victoriametrics.com/keyConcepts.html#raw-samples
@@ -99,10 +100,11 @@ fn create_table_by_file<P: AsRef<Path>>(ctx: &SessionContext, path: P) -> Result
     let data = fs::read(path).wrap_err_with(|| format!("{}", path.display()))?;
     let resp: Response = serde_json::from_slice(&data)
         .map_err(|e| eyre!("Failed to parse JSON file {}: {e}", path.display()))?;
-    let (metric_schema, values_schema) = create_schema_from_record(&resp.data.result);
+    let (metric_schema, values_schema) = create_schemas_from_record(&resp.data.result);
     let metric_schema = Arc::new(metric_schema);
     let values_schema = Arc::new(values_schema);
 
+    // Create `<metric_name>_labels` table.
     let metric_batch =
         create_metric_record_batch(metric_type, metric_schema.clone(), &resp.data.result)?;
     let metric_provider = MemTable::try_new(metric_schema, vec![vec![metric_batch]])?;
@@ -112,6 +114,7 @@ fn create_table_by_file<P: AsRef<Path>>(ctx: &SessionContext, path: P) -> Result
     );
     ctx.register_table(metric_table_name.as_str(), Arc::new(metric_provider))?;
 
+    // Create `<metric_name>_values` table.
     let values_batch = create_values_record_batch(values_schema.clone(), &resp.data.result)?;
     let values_provider = MemTable::try_new(values_schema, vec![vec![values_batch]])?;
     let values_table_name = format!(
@@ -122,27 +125,20 @@ fn create_table_by_file<P: AsRef<Path>>(ctx: &SessionContext, path: P) -> Result
     Ok(())
 }
 
-fn create_schema_from_record(data: &[TimeSeries]) -> (Schema, Schema) {
+fn create_schemas_from_record(data: &[Series]) -> (Schema, Schema) {
+    let mut fields = vec![
+        Field::new(value::FIELD_TYPE.to_string(), DataType::Utf8, false),
+        Field::new(value::FIELD_HASH.to_string(), DataType::Utf8, false),
+    ];
     let mut fields_map = FxHashSet::default();
-    let mut fields = Vec::new();
     for row in data {
-        row.metric.keys().for_each(|k| {
-            if !fields_map.contains(k) {
+        fields.extend(row.metric.keys().filter_map(|k| {
+            (!fields_map.contains(k)).then(|| {
                 fields_map.insert(k.to_string());
-                fields.push(Field::new(k, DataType::Utf8, true));
-            }
-        });
+                Field::new(k, DataType::Utf8, true)
+            })
+        }));
     }
-    fields.push(Field::new(
-        value::FIELD_TYPE.to_string(),
-        DataType::Utf8,
-        false,
-    ));
-    fields.push(Field::new(
-        value::FIELD_HASH.to_string(),
-        DataType::Utf8,
-        false,
-    ));
     let metric_schema = Schema::new(fields);
 
     let value_schema = Schema::new(vec![
@@ -157,20 +153,19 @@ fn create_schema_from_record(data: &[TimeSeries]) -> (Schema, Schema) {
 fn create_metric_record_batch(
     metric_type: &str,
     schema: Arc<Schema>,
-    data: &[TimeSeries],
+    data: &[Series],
 ) -> Result<RecordBatch> {
     let mut field_values = FxHashMap::<_, Vec<_>>::default();
 
-    for time_series in data {
-        let mut field_map = Vec::with_capacity(time_series.metric.len());
-        time_series.metric.iter().for_each(|(k, v)| {
-            field_map.push(Arc::new(value::Label {
-                name: k.to_string(),
-                value: v.to_string(),
-            }));
-        });
-        field_map.sort_by(|a, b| a.name.cmp(&b.name));
-        let hash_value = value::signature(&field_map);
+    for series in data {
+        field_values
+            .entry(value::FIELD_TYPE.to_string())
+            .or_default()
+            .push(metric_type.to_string());
+        field_values
+            .entry(value::FIELD_HASH.to_string())
+            .or_default()
+            .push(metrics_hash(series));
 
         for field in schema.fields() {
             let field_name = field.name();
@@ -179,9 +174,10 @@ fn create_metric_record_batch(
                 || field_name == value::FIELD_TIME
                 || field_name == value::FIELD_VALUE
             {
+                // not a metric label
                 continue;
             }
-            let field_value = time_series
+            let field_value = series
                 .metric
                 .get(field_name)
                 .map_or("", |v| v.as_str().unwrap());
@@ -190,14 +186,6 @@ fn create_metric_record_batch(
                 .or_default()
                 .push(field_value.to_string());
         }
-        field_values
-            .entry(value::FIELD_TYPE.to_string())
-            .or_default()
-            .push(metric_type.to_string());
-        field_values
-            .entry(value::FIELD_HASH.to_string())
-            .or_default()
-            .push(hash_value.clone().into());
     }
 
     let mut columns: Vec<ArrayRef> = Vec::new();
@@ -214,24 +202,15 @@ fn create_metric_record_batch(
     Ok(RecordBatch::try_new(schema, columns)?)
 }
 
-fn create_values_record_batch(schema: Arc<Schema>, data: &[TimeSeries]) -> Result<RecordBatch> {
+fn create_values_record_batch(schema: Arc<Schema>, data: &[Series]) -> Result<RecordBatch> {
     let mut hash_field_values: Vec<String> = Vec::new();
     let mut time_field_values = Vec::new();
     let mut value_field_values = Vec::new();
 
-    for time_series in data {
-        let mut field_map = Vec::with_capacity(time_series.metric.len());
-        time_series.metric.iter().for_each(|(k, v)| {
-            field_map.push(Arc::new(value::Label {
-                name: k.to_string(),
-                value: v.to_string(),
-            }));
-        });
-        field_map.sort_by(|a, b| a.name.cmp(&b.name));
-        let hash_value = value::signature(&field_map);
-
-        for sample in &time_series.values {
-            hash_field_values.push(hash_value.clone().into());
+    for series in data {
+        let hash = metrics_hash(series);
+        for sample in &series.samples {
+            hash_field_values.push(hash.clone());
             time_field_values.push((sample.timestamp * 1_000_000.0) as i64);
             value_field_values.push(sample.value.parse::<f64>()?);
         }
@@ -245,4 +224,20 @@ fn create_values_record_batch(schema: Arc<Schema>, data: &[TimeSeries]) -> Resul
             Arc::new(Float64Array::from(value_field_values)),
         ],
     )?)
+}
+
+/// Returned value will be stored in `__hash__` column.
+fn metrics_hash(series: &Series) -> String {
+    let mut labels = series
+        .metric
+        .iter()
+        .map(|(k, v)| {
+            Arc::new(value::Label {
+                name: k.to_string(),
+                value: v.to_string(),
+            })
+        })
+        .collect::<Vec<_>>();
+    labels.sort_by(|a, b| a.name.cmp(&b.name));
+    value::signature(&labels).into()
 }
