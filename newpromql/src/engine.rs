@@ -1,6 +1,6 @@
 use async_recursion::async_recursion;
 use datafusion::{
-    arrow::json as arrowJson,
+    arrow::array::{Float64Array, Int64Array, StringArray},
     error::{DataFusionError, Result},
     prelude::{col, lit, SessionContext},
 };
@@ -269,8 +269,7 @@ impl QueryEngine {
     ) -> Result<()> {
         tracing::info!("selector_load_data: start");
         let table_name = selector.name.as_ref().unwrap();
-        let metric_table_name = format!("{}_labels", table_name);
-        let table = self.ctx.table(metric_table_name).await?;
+        let table = self.ctx.table(table_name).await?;
 
         let start = {
             // https://promlabs.com/blog/2020/07/02/selecting-data-in-promql/#lookback-delta
@@ -280,7 +279,11 @@ impl QueryEngine {
         let end = self.end; // 30 minutes + 5m = 35m
 
         // 1. Group by metrics (sets of label name-value pairs)
-        let mut df_group = table.clone();
+        let mut df_group = table.clone().filter(
+            col(FIELD_TIME)
+                .gt(lit(start))
+                .and(col(FIELD_TIME).lt_eq(lit(end))),
+        )?;
         let regexp_match_udf = super::datafusion::regexp_udf::REGEX_MATCH_UDF.clone();
         let regexp_not_match_udf = super::datafusion::regexp_udf::REGEX_NOT_MATCH_UDF.clone();
         for mat in selector.matchers.matchers.iter() {
@@ -306,66 +309,60 @@ impl QueryEngine {
             }
         }
         tracing::info!("selector_load_data: loaded metrics 0");
-        let group_data = df_group.collect().await?;
+        let batches = df_group.collect().await?;
         tracing::info!("selector_load_data: loaded metrics 1");
-        let metrics = arrowJson::writer::record_batches_to_json_rows(&group_data)?;
-        tracing::info!("selector_load_data: loaded metrics 2");
-        // key — the value of FIELD_HASH column; value — time series (`RangeValue`)
-        let mut metrics = metrics
-            .iter()
-            .map(|row| {
-                let mut labels = row
-                    .iter()
-                    .map(|(k, v)| {
-                        Arc::new(Label {
-                            name: k.to_owned(),
-                            value: v.as_str().unwrap().to_owned(),
-                        })
-                    })
-                    .collect::<Vec<_>>();
-                labels.sort_by(|a, b| a.name.cmp(&b.name));
-                let hash = labels
-                    .iter()
-                    .find(|x| x.name == FIELD_HASH)
-                    .unwrap()
-                    .value
-                    .clone();
-                (
-                    hash,
+        let mut metrics: FxHashMap<String, RangeValue> = FxHashMap::default();
+        for batch in &batches {
+            let hash_values = batch
+                .column_by_name(FIELD_HASH)
+                .unwrap()
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .unwrap();
+            let time_values = batch
+                .column_by_name(FIELD_TIME)
+                .unwrap()
+                .as_any()
+                .downcast_ref::<Int64Array>()
+                .unwrap();
+            let value_values = batch
+                .column_by_name(FIELD_VALUE)
+                .unwrap()
+                .as_any()
+                .downcast_ref::<Float64Array>()
+                .unwrap();
+            for i in 0..batch.num_rows() {
+                let hash = hash_values.value(i).to_string();
+                let entry = metrics.entry(hash).or_insert_with(|| {
+                    let mut labels = Vec::new();
+                    for (k, v) in batch.schema().fields().iter().zip(batch.columns()) {
+                        let name = k.name();
+                        if name == FIELD_TIME || name == FIELD_VALUE {
+                            continue;
+                        }
+                        let value = v.as_any().downcast_ref::<StringArray>().unwrap();
+                        labels.push(Arc::new(Label {
+                            name: name.to_string(),
+                            value: value.value(i).to_string(),
+                        }));
+                    }
+                    labels.sort_by(|a, b| a.name.cmp(&b.name));
                     RangeValue {
                         labels,
                         time_range: None,
-                        // the vector of samples will be filled later
                         values: Vec::with_capacity(20),
-                    },
-                )
-            })
-            .collect::<FxHashMap<_, _>>();
-        tracing::info!("selector_load_data: loaded metrics 3, {}", metrics.len());
-
-        // 2. Fetch all samples and then group by metrics
-        let values_table_name = format!("{}_values", table_name);
-        let table = self.ctx.table(values_table_name).await?;
-        let mut df_data = table.filter(
-            col(FIELD_TIME)
-                .gt(lit(start))
-                .and(col(FIELD_TIME).lt_eq(lit(end))),
-        )?;
-        df_data = df_data.select(vec![col(FIELD_HASH), col(FIELD_TIME), col(FIELD_VALUE)])?;
-        let metric_data = df_data.collect().await?;
-        let metric_data = arrowJson::writer::record_batches_to_json_rows(&metric_data)?;
-        tracing::info!("selector_load_data: loaded values");
-        for row in metric_data {
-            let hash = row.get(FIELD_HASH).unwrap().as_str().unwrap().to_owned();
-            // `FIELD_HASH` is a primary key, so we can safely unwrap
-            metrics.get_mut(&hash).unwrap().values.push(Sample {
-                timestamp: row.get(FIELD_TIME).unwrap().as_i64().unwrap(),
-                value: row.get(FIELD_VALUE).unwrap().as_f64().unwrap(),
-            });
+                    }
+                });
+                entry.values.push(Sample {
+                    timestamp: time_values.value(i),
+                    value: value_values.value(i),
+                });
+            }
         }
+        tracing::info!("selector_load_data: loaded samples");
+
         // We don't need the primary key (FIELD_HASH) any more
         let mut metric_values = metrics.into_values().collect::<Vec<_>>();
-        tracing::info!("selector_load_data: loaded partiton metrics");
 
         // Fix data about app restart
         for metric in metric_values.iter_mut() {
