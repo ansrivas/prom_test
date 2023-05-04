@@ -255,17 +255,12 @@ impl QueryEngine {
                 //
                 // [drain]: https://doc.rust-lang.org/std/vec/struct.Vec.html#method.drain
                 // [range]: https://doc.rust-lang.org/std/ops/trait.RangeBounds.html
-                //XXX let samples = series
-                //XXX     .samples
-                //XXX     .iter()
-                //XXX     .filter(|s| s.timestamp > start && s.timestamp <= end)
-                //XXX     .cloned()
-                //XXX     .collect();
-                let mut samples = series
+                let samples = series
                     .samples
-                    // XXX-OPTIMIZE: avoid clone
-                    .clone();
-                samples.retain(|v| v.timestamp > start && v.timestamp <= end);
+                    .iter()
+                    .filter(|s| s.timestamp > start && s.timestamp <= end)
+                    .cloned()
+                    .collect();
                 RangeValue {
                     metric: series.metric.clone(),
                     samples,

@@ -8,5 +8,9 @@ pub(crate) fn avg_over_time(data: &Value) -> Result<Value> {
 
 fn exec(data: &RangeValue) -> f64 {
     let samples = &data.samples;
+    if samples.is_empty() {
+        return 0.0;
+        // otherwise we would divide by samples.len() == 0
+    }
     samples.iter().map(|s| s.value).sum::<f64>() / samples.len() as f64
 }
