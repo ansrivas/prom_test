@@ -18,7 +18,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use newpromql::{value, Labels};
+use newpromql::value;
 
 /// Prometheus HTTP API response
 ///
@@ -213,12 +213,16 @@ fn create_record_batch(
 
 /// Returned value will be stored in `__hash__` column.
 fn metrics_hash(series: &Series) -> String {
-    Labels::new(
-        series
-            .metric
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.to_string())),
-    )
-    .signature()
-    .into()
+    let mut labels = series
+        .metric
+        .iter()
+        .map(|(k, v)| {
+            Arc::new(value::Label {
+                name: k.to_string(),
+                value: v.to_string(),
+            })
+        })
+        .collect::<Vec<_>>();
+    labels.sort_by(|a, b| a.name.cmp(&b.name));
+    value::signature(&labels).into()
 }

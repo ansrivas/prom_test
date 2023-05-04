@@ -11,4 +11,3 @@ arrow = { version = "36", features = ["simd", "ipc_compression"] }
 datafusion = { version = "22", features = ["simd"] }
 serde = { version = "1.0", features = ["derive", "rc"] }
 time = "0.3"
-tracing = "0.1"

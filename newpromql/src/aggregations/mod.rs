@@ -1,12 +1,10 @@
 use datafusion::error::{DataFusionError, Result};
-use promql_parser::parser::{Expr as PromExpr, LabelModifier};
+use promql_parser::parser::Expr as PromExpr;
+use promql_parser::parser::LabelModifier;
 use rustc_hash::FxHashMap;
 
-use crate::{
-    labels::{self, Labels},
-    value::{InstantValue, Sample, Value},
-    QueryEngine,
-};
+use crate::value::{signature, Labels, Signature, Value};
+use crate::QueryEngine;
 
 mod avg;
 mod bottomk;
@@ -24,25 +22,10 @@ pub(crate) use min::min;
 pub(crate) use sum::sum;
 pub(crate) use topk::topk;
 
-#[derive(Debug, Clone, Default)]
 pub(crate) struct ArithmeticItem {
     pub(crate) labels: Labels,
     pub(crate) value: f64,
     pub(crate) num: usize,
-}
-
-impl ArithmeticItem {
-    pub(crate) fn into_instant_value(
-        self,
-        timestamp: i64,
-        calculate_sample_value: fn(&Self) -> f64,
-    ) -> InstantValue {
-        let value = calculate_sample_value(&self);
-        InstantValue {
-            metric: self.labels,
-            sample: Sample { timestamp, value },
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -56,13 +39,13 @@ pub(crate) fn eval_arithmetic(
     data: &Value,
     f_name: &str,
     f_handler: fn(total: f64, val: f64) -> f64,
-) -> Result<Option<FxHashMap<labels::Signature, ArithmeticItem>>> {
+) -> Result<Option<FxHashMap<Signature, ArithmeticItem>>> {
     let data = match data {
         Value::Vector(v) => v,
         Value::None => return Ok(None),
         _ => {
             return Err(DataFusionError::Internal(format!(
-                "{f_name}: vector argument expected"
+                "[{f_name}] function only accept vector values"
             )))
         }
     };
@@ -70,43 +53,53 @@ pub(crate) fn eval_arithmetic(
     let mut score_values = FxHashMap::default();
     match param {
         Some(v) => match v {
-            LabelModifier::Include(labels_to_include) => {
-                for ival in data {
-                    let mut labels = ival.metric.clone();
-                    labels.retain(|label| labels_to_include.contains(&label.name));
-                    let entry = score_values
-                        .entry(labels.signature())
-                        .or_insert(ArithmeticItem {
-                            labels,
-                            value: 0.0,
-                            num: 0,
-                        });
-                    entry.value = f_handler(entry.value, ival.sample.value);
+            LabelModifier::Include(labels) => {
+                for item in data.iter() {
+                    let mut sum_labels = Labels::default();
+                    for label in item.labels.iter() {
+                        if labels.contains(&label.name) {
+                            sum_labels.push(label.clone());
+                        }
+                    }
+                    let sum_hash = signature(&sum_labels);
+                    let entry = score_values.entry(sum_hash).or_insert(ArithmeticItem {
+                        labels: sum_labels,
+                        value: 0.0,
+                        num: 0,
+                    });
+                    entry.value = f_handler(entry.value, item.value.value);
                     entry.num += 1;
                 }
             }
-            LabelModifier::Exclude(labels_to_exclude) => {
-                for ival in data {
-                    let mut labels = ival.metric.clone();
-                    labels.retain(|label| !labels_to_exclude.contains(&label.name));
-                    let entry = score_values
-                        .entry(labels.signature())
-                        .or_insert(ArithmeticItem {
-                            labels,
-                            value: 0.0,
-                            num: 0,
-                        });
-                    entry.value = f_handler(entry.value, ival.sample.value);
+            LabelModifier::Exclude(labels) => {
+                for item in data.iter() {
+                    let mut sum_labels = Labels::default();
+                    for label in item.labels.iter() {
+                        if !labels.contains(&label.name) {
+                            sum_labels.push(label.clone());
+                        }
+                    }
+                    let sum_hash = signature(&sum_labels);
+                    let entry = score_values.entry(sum_hash).or_insert(ArithmeticItem {
+                        labels: sum_labels,
+                        value: 0.0,
+                        num: 0,
+                    });
+                    entry.value = f_handler(entry.value, item.value.value);
                     entry.num += 1;
                 }
             }
         },
         None => {
-            for ival in data.iter() {
+            for item in data.iter() {
                 let entry = score_values
-                    .entry(labels::Signature::default())
-                    .or_default();
-                entry.value = f_handler(entry.value, ival.sample.value);
+                    .entry(Signature::default())
+                    .or_insert(ArithmeticItem {
+                        labels: Labels::default(),
+                        value: 0.0,
+                        num: 0,
+                    });
+                entry.value = f_handler(entry.value, item.value.value);
                 entry.num += 1;
             }
         }
@@ -127,7 +120,7 @@ pub async fn eval_top(
         Value::Float(v) => v as usize,
         _ => {
             return Err(DataFusionError::Internal(format!(
-                "{fn_name}: param must be NumberLiteral"
+                "[{fn_name}] param must be NumberLiteral"
             )))
         }
     };
@@ -137,21 +130,21 @@ pub async fn eval_top(
         Value::None => return Ok(Value::None),
         _ => {
             return Err(DataFusionError::Internal(format!(
-                "{fn_name}: vector argument expected"
+                "[{fn_name}] function only accept vector values"
             )))
         }
     };
 
-    let mut score_values = data
-        .iter()
-        .enumerate()
-        .filter_map(|(i, ival)| {
-            (!ival.sample.value.is_nan()).then_some(TopItem {
-                index: i,
-                value: ival.sample.value,
-            })
-        })
-        .collect::<Vec<_>>();
+    let mut score_values = Vec::new();
+    for (i, item) in data.iter().enumerate() {
+        if item.value.value.is_nan() {
+            continue;
+        }
+        score_values.push(TopItem {
+            index: i,
+            value: item.value.value,
+        });
+    }
 
     if is_bottom {
         score_values.sort_by(|a, b| a.value.partial_cmp(&b.value).unwrap());

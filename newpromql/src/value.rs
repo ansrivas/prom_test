@@ -1,11 +1,9 @@
-use std::cmp::Ordering;
-
+use rustc_hash::FxHashMap;
 use serde::{
     ser::{SerializeSeq, SerializeStruct, Serializer},
     Serialize,
 };
-
-use crate::labels::Labels;
+use std::{cmp::Ordering, sync::Arc};
 
 pub const FIELD_HASH: &str = "__hash__";
 pub const FIELD_NAME: &str = "__name__";
@@ -19,13 +17,12 @@ pub const TYPE_GAUGE: &str = "gauge";
 pub const TYPE_HISTOGRAM: &str = "histogram";
 pub const TYPE_SUMMARY: &str = "summary";
 
-/// Time series — a stream of data points belonging to a metric.
-///
-/// See <https://promlabs.com/blog/2020/07/02/selecting-data-in-promql/#refresher-prometheus-data-model>
+pub type Labels = Vec<Arc<Label>>;
+
 #[derive(Debug, Clone)]
-pub(crate) struct Series {
-    pub(crate) metric: Labels,
-    pub(crate) samples: Vec<Sample>,
+pub struct Label {
+    pub name: String,
+    pub value: String,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -49,8 +46,8 @@ impl Serialize for Sample {
 
 #[derive(Debug, Clone)]
 pub struct InstantValue {
-    pub metric: Labels,
-    pub sample: Sample,
+    pub labels: Labels,
+    pub value: Sample,
 }
 
 impl Serialize for InstantValue {
@@ -58,32 +55,23 @@ impl Serialize for InstantValue {
     where
         S: Serializer,
     {
-        let mut state = serializer.serialize_struct("InstantValue", 2)?;
-        state.serialize_field("metric", &self.metric)?;
-        state.serialize_field("value", &self.sample)?;
-        state.end()
+        let mut seq = serializer.serialize_struct("instant_value", 2)?;
+        let labels_map = self
+            .labels
+            .iter()
+            .map(|l| (l.name.as_str(), l.value.as_str()))
+            .collect::<FxHashMap<_, _>>();
+        seq.serialize_field("metric", &labels_map)?;
+        seq.serialize_field("value", &self.value)?;
+        seq.end()
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct RangeValue {
-    // XXX-TODO: replace `metric` and `samples` with a single `series: Series` field
-    pub metric: Labels,
-    pub samples: Vec<Sample>,
-
-    /// Time window, microseconds.
-    ///
-    /// `time_range.1 - time_range.0` is equal to the time duration that is
-    /// appended in square brackets at the end of a range vector selector.
-    /// E.g. in the following query
-    /// ```promql
-    /// http_requests_total{job="prometheus"}[2m]
-    /// ```
-    /// the duration of the time window is 2 minutes.
-    ///
-    /// See also
-    /// <https://promlabs.com/blog/2020/06/18/the-anatomy-of-a-promql-query/#range-queries>
-    pub time_range: Option<(i64, i64)>,
+    pub labels: Labels,
+    pub time_range: Option<(i64, i64)>, // start, end
+    pub values: Vec<Sample>,
 }
 
 impl Serialize for RangeValue {
@@ -91,10 +79,15 @@ impl Serialize for RangeValue {
     where
         S: Serializer,
     {
-        let mut state = serializer.serialize_struct("RangeValue", 2)?;
-        state.serialize_field("metric", &self.metric)?;
-        state.serialize_field("values", &self.samples)?;
-        state.end()
+        let mut seq = serializer.serialize_struct("range_value", 2)?;
+        let labels_map = self
+            .labels
+            .iter()
+            .map(|l| (l.name.as_str(), l.value.as_str()))
+            .collect::<FxHashMap<_, _>>();
+        seq.serialize_field("metric", &labels_map)?;
+        seq.serialize_field("values", &self.values)?;
+        seq.end()
     }
 }
 
@@ -104,7 +97,7 @@ impl RangeValue {
     ///
     /// [extrapolated]: https://promlabs.com/blog/2021/01/29/how-exactly-does-promql-calculate-rates/#extrapolation-of-data
     pub(crate) fn extrapolate(&self) -> Option<(Sample, Sample)> {
-        let samples = &self.samples;
+        let samples = &self.values;
         if samples.len() < 2 {
             return None;
         }
@@ -157,6 +150,13 @@ pub enum Value {
 }
 
 impl Value {
+    pub(crate) fn get_ref_matrix_values(&self) -> Option<&Vec<RangeValue>> {
+        match self {
+            Value::Matrix(values) => Some(values),
+            _ => None,
+        }
+    }
+
     pub fn get_type(&self) -> &str {
         match self {
             Value::Instant(_) => "vector",
@@ -173,16 +173,16 @@ impl Value {
         match self {
             Value::Vector(v) => {
                 v.sort_by(|a, b| {
-                    b.sample
+                    b.value
                         .value
-                        .partial_cmp(&a.sample.value)
+                        .partial_cmp(&a.value.value)
                         .unwrap_or(Ordering::Equal)
                 });
             }
             Value::Matrix(v) => {
                 v.sort_by(|a, b| {
-                    let a = a.samples.iter().map(|x| x.value).sum::<f64>();
-                    let b = b.samples.iter().map(|x| x.value).sum::<f64>();
+                    let a = a.values.iter().map(|x| x.value).sum::<f64>();
+                    let b = b.values.iter().map(|x| x.value).sum::<f64>();
                     b.partial_cmp(&a).unwrap_or(Ordering::Equal)
                 });
             }
@@ -191,123 +191,73 @@ impl Value {
     }
 }
 
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
+pub struct Signature([u8; 32]);
+
+impl From<Signature> for String {
+    fn from(sig: Signature) -> Self {
+        hex::encode(sig.0)
+    }
+}
+
+// REFACTORME: make this a method of `Metric`
+pub fn signature(labels: &Labels) -> Signature {
+    signature_without_labels(labels, &[])
+}
+
+/// `signature_without_labels` is just as [`signature`], but only for labels not matching `names`.
+// REFACTORME: make this a method of `Metric`
+pub fn signature_without_labels(labels: &Labels, exclude_names: &[&str]) -> Signature {
+    let mut hasher = blake3::Hasher::new();
+    labels
+        .iter()
+        .filter(|item| !exclude_names.contains(&item.name.as_str()))
+        .for_each(|item| {
+            hasher.update(item.name.as_bytes());
+            hasher.update(item.value.as_bytes());
+        });
+    Signature(hasher.finalize().into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use expect_test::expect;
 
     #[test]
-    fn test_sample_serialize() {
-        let sample = Sample {
-            timestamp: 1683138292000000,
-            value: 3.14,
-        };
-        expect![[r#"
-            [
-              1683138292,
-              "3.14"
-            ]"#]]
-        .assert_eq(&serde_json::to_string_pretty(&sample).unwrap());
-    }
+    fn test_signature_without_labels() {
+        let mut labels: Labels = Default::default();
+        labels.push(Arc::new(Label {
+            name: "a".to_owned(),
+            value: "1".to_owned(),
+        }));
+        labels.push(Arc::new(Label {
+            name: "b".to_owned(),
+            value: "2".to_owned(),
+        }));
+        labels.push(Arc::new(Label {
+            name: "c".to_owned(),
+            value: "3".to_owned(),
+        }));
+        labels.push(Arc::new(Label {
+            name: "d".to_owned(),
+            value: "4".to_owned(),
+        }));
 
-    #[test]
-    fn test_instant_value_serialize() {
-        let ival = InstantValue {
-            metric: Labels::new([
-                ("__name__", "zo_http_response_time_bucket"),
-                ("cloud", "gcp"),
-                ("cluster", "zo1"),
-                ("endpoint", "/_json"),
-                ("exported_instance", "zo1-zincobserve-ingester-0"),
-                (
-                    "instance",
-                    "zo1-zincobserve-ingester.ziox-alpha1.svc.cluster.local:5080",
-                ),
-                ("job", "zincobserve"),
-                ("le", "1"),
-                ("metric_type", "histogram"),
-                ("namespace", "ziox-alpha1"),
-                ("organization", "default"),
-                ("role", "ingester"),
-                ("status", "200"),
-                ("stream", "gke-fluentbit"),
-                ("stream_type", "logs"),
-            ]),
-            sample: Sample {
-                timestamp: 1683138292000000,
-                value: 3.14,
-            },
-        };
+        let sig = signature(&labels);
         expect![[r#"
-            {
-              "metric": {
-                "__name__": "zo_http_response_time_bucket",
-                "cloud": "gcp",
-                "cluster": "zo1",
-                "endpoint": "/_json",
-                "exported_instance": "zo1-zincobserve-ingester-0",
-                "instance": "zo1-zincobserve-ingester.ziox-alpha1.svc.cluster.local:5080",
-                "job": "zincobserve",
-                "le": "1",
-                "metric_type": "histogram",
-                "namespace": "ziox-alpha1",
-                "organization": "default",
-                "role": "ingester",
-                "status": "200",
-                "stream": "gke-fluentbit",
-                "stream_type": "logs"
-              },
-              "value": [
-                1683138292,
-                "3.14"
-              ]
-            }"#]]
-        .assert_eq(&serde_json::to_string_pretty(&ival).unwrap());
-    }
+            "f287fde2994111abd7740b5c7c28b0eeabe3f813ae65397bb6acb684e2ab6b22"
+        "#]]
+        .assert_debug_eq(&String::from(sig));
 
-    #[test]
-    fn test_range_value_serialize() {
-        let rval = RangeValue {
-            metric: Labels::new([
-                ("cloud", "gcp"),
-                ("exported_instance", "zo1-zincobserve-ingester-0"),
-                ("cluster", "zo1"),
-                ("endpoint", "/_json"),
-                ("__name__", "zo_http_response_time_bucket"),
-            ]),
-            samples: vec![
-                Sample {
-                    timestamp: 1683138292000000,
-                    value: 1.1,
-                },
-                Sample {
-                    timestamp: 1683138317000000,
-                    value: 2.2,
-                },
-            ],
-            time_range: Some((100, 500)),
-        };
+        let sig: String = signature_without_labels(&labels, &["a", "c"]).into();
         expect![[r#"
-            {
-              "metric": {
-                "__name__": "zo_http_response_time_bucket",
-                "cloud": "gcp",
-                "cluster": "zo1",
-                "endpoint": "/_json",
-                "exported_instance": "zo1-zincobserve-ingester-0"
-              },
-              "values": [
-                [
-                  1683138292,
-                  "1.1"
-                ],
-                [
-                  1683138317,
-                  "2.2"
-                ]
-              ]
-            }"#]]
-        .assert_eq(&serde_json::to_string_pretty(&rval).unwrap());
+            "ec9c3a0c9c03420d330ab62021551cffe993c07b20189c5ed831dad22f54c0c7"
+        "#]]
+        .assert_debug_eq(&sig);
+        assert_eq!(sig.len(), 64);
+
+        assert_eq!(signature(&labels), signature_without_labels(&labels, &[]));
     }
 
     #[test]

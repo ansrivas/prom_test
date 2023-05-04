@@ -1,7 +1,7 @@
 use datafusion::error::Result;
 use promql_parser::parser::LabelModifier;
 
-use crate::value::Value;
+use crate::value::{InstantValue, Sample, Value};
 
 pub fn sum(timestamp: i64, param: &Option<LabelModifier>, data: &Value) -> Result<Value> {
     let score_values = super::eval_arithmetic(param, data, "sum", |total, val| total + val)?;
@@ -10,8 +10,14 @@ pub fn sum(timestamp: i64, param: &Option<LabelModifier>, data: &Value) -> Resul
     }
     let values = score_values
         .unwrap()
-        .into_values()
-        .map(|x| x.into_instant_value(timestamp, |x| x.value))
-        .collect();
+        .values()
+        .map(|v| InstantValue {
+            labels: v.labels.clone(),
+            value: Sample {
+                timestamp,
+                value: v.value,
+            },
+        })
+        .collect::<Vec<_>>();
     Ok(Value::Vector(values))
 }
