@@ -7,17 +7,17 @@ pub(crate) fn irate(data: &Value) -> Result<Value> {
 }
 
 fn exec(data: &RangeValue) -> f64 {
-    if data.values.len() <= 1 {
+    if data.samples.len() < 2 {
         return 0.0;
     }
-    let (last, data) = data.values.split_last().unwrap();
-    let previous = match data.last() {
+    let (last, data) = data.samples.split_last().unwrap();
+    let before_last = match data.last() {
         Some(v) => v,
         None => return 0.0,
     };
-    let dt_seconds = ((last.timestamp - previous.timestamp) / 1_000_000) as f64;
+    let dt_seconds = ((last.timestamp - before_last.timestamp) / 1_000_000) as f64;
     if dt_seconds == 0.0 {
         return 0.0;
     }
-    (last.value - previous.value) / dt_seconds
+    (last.value - before_last.value) / dt_seconds
 }

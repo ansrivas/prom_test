@@ -1,9 +1,16 @@
+use std::{
+    str::FromStr,
+    sync::Arc,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
+
 use async_recursion::async_recursion;
 use datafusion::{
     arrow::array::{Float64Array, Int64Array, StringArray},
     error::{DataFusionError, Result},
     prelude::{col, lit, SessionContext},
 };
+use indexmap::IndexMap;
 use promql_parser::{
     label::MatchOp,
     parser::{
@@ -13,13 +20,19 @@ use promql_parser::{
     },
 };
 use rustc_hash::FxHashMap;
-use std::{
-    str::FromStr,
-    sync::Arc,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+
+use crate::{
+    aggregations,
+    datafusion::regexp_udf,
+    functions::{self, Func},
+    labels::Labels,
+    value::*,
 };
 
-use crate::{aggregations, functions, value::*};
+// See https://docs.rs/indexmap/latest/indexmap/#alternate-hashers
+type FxIndexMap<K, V> = IndexMap<K, V, std::hash::BuildHasherDefault<rustc_hash::FxHasher>>;
+
+type MetricsCache = FxHashMap<String, Arc<Vec<Series>>>;
 
 pub struct QueryEngine {
     ctx: Arc<SessionContext>,
@@ -35,7 +48,8 @@ pub struct QueryEngine {
     ///
     /// [range query]: https://promlabs.com/blog/2020/06/18/the-anatomy-of-a-promql-query/#range-queries
     time_window_idx: i64,
-    data_cache: FxHashMap<String, Value>,
+    /// key — metric name; value — time series data
+    metrics_cache: MetricsCache,
 }
 
 impl QueryEngine {
@@ -49,7 +63,7 @@ impl QueryEngine {
             interval: five_min,
             lookback_delta: five_min,
             time_window_idx: 0,
-            data_cache: FxHashMap::default(),
+            metrics_cache: Default::default(),
         }
     }
 
@@ -67,10 +81,10 @@ impl QueryEngine {
             // Instant query
             let mut value = self.exec_expr(&stmt.expr).await?;
             if let Value::Float(v) = value {
-                value = Value::Sample(Sample {
+                return Ok(Value::Sample(Sample {
                     timestamp: self.end,
                     value: v,
-                });
+                }));
             }
             value.sort();
             return Ok(value);
@@ -84,30 +98,33 @@ impl QueryEngine {
             self.time_window_idx = i;
             match self.exec_expr(&stmt.expr).await? {
                 Value::Instant(v) => instant_vectors.push(RangeValue {
-                    labels: v.labels.to_owned(),
+                    metric: v.metric,
+                    samples: vec![v.sample],
                     time_range: None,
-                    values: vec![v.value],
                 }),
-                Value::Vector(vs) => instant_vectors.extend(vs.into_iter().map(|v| RangeValue {
-                    labels: v.labels.to_owned(),
-                    time_range: None,
-                    values: vec![v.value],
-                })),
                 Value::Range(v) => instant_vectors.push(v),
-                Value::Matrix(v) => instant_vectors.extend(v),
+                Value::Vector(vs) => instant_vectors.extend(vs.into_iter().map(|v| RangeValue {
+                    metric: v.metric,
+                    samples: vec![v.sample],
+                    time_range: None,
+                })),
+                Value::Matrix(vs) => instant_vectors.extend(vs),
                 Value::Sample(v) => instant_vectors.push(RangeValue {
-                    labels: Labels::default(),
+                    metric: Labels::default(),
+                    samples: vec![v],
                     time_range: None,
-                    values: vec![v],
                 }),
-                Value::Float(v) => instant_vectors.push(RangeValue {
-                    labels: Labels::default(),
-                    time_range: None,
-                    values: vec![Sample {
+                Value::Float(v) => {
+                    let sample = Sample {
                         timestamp: self.start + (self.interval * self.time_window_idx),
                         value: v,
-                    }],
-                }),
+                    };
+                    instant_vectors.push(RangeValue {
+                        metric: Labels::default(),
+                        samples: vec![sample],
+                        time_range: None,
+                    });
+                }
                 Value::None => continue,
             };
         }
@@ -118,23 +135,30 @@ impl QueryEngine {
         }
 
         // merge data
-        let mut merged_data = FxHashMap::default();
-        let mut merged_metrics = FxHashMap::default();
-        for value in instant_vectors {
-            merged_data
-                .entry(signature(&value.labels))
-                .or_insert_with(Vec::new)
-                .extend(value.values);
-            merged_metrics.insert(signature(&value.labels), value.labels);
-        }
-        let merged_data = merged_data
+        let mut merged_samples = FxHashMap::default();
+        let mut merged_metrics = instant_vectors
             .into_iter()
-            .map(|(sig, values)| RangeValue {
-                labels: merged_metrics.get(&sig).unwrap().to_owned(),
+            .map(|rval| {
+                let sig = rval.metric.signature();
+                merged_samples
+                    .entry(sig.clone())
+                    .or_insert_with(Vec::new)
+                    .extend(rval.samples);
+                (sig, rval.metric)
+            })
+            .collect::<FxHashMap<_, _>>();
+
+        let merged_data = merged_samples
+            .into_iter()
+            .map(|(sig, samples)| RangeValue {
+                metric: merged_metrics.remove(&sig).unwrap(),
+                samples,
                 time_range: None,
-                values,
             })
             .collect::<Vec<_>>();
+        // We have moved all the values from `merged_metrics` into
+        // `merged_data`.
+        assert!(merged_metrics.is_empty());
 
         // sort data
         let mut value = Value::Matrix(merged_data);
@@ -187,41 +211,27 @@ impl QueryEngine {
         })
     }
 
-    /// MatrixSelector is a special case of VectorSelector that returns a matrix of samples.
     async fn eval_vector_selector(
         &mut self,
         selector: &VectorSelector,
     ) -> Result<Vec<InstantValue>> {
-        let metrics_name = selector.name.as_ref().unwrap();
-        if !self.data_cache.contains_key(metrics_name) {
-            self.selector_load_data(selector, None).await?;
-        }
-        let cache_data = match self.data_cache.get(metrics_name) {
-            Some(v) => match v.get_ref_matrix_values() {
-                Some(v) => v,
-                None => return Ok(vec![]),
-            },
-            None => return Ok(vec![]),
-        };
-
-        let mut values = vec![];
-        for metric in cache_data {
-            let value = match metric.values.last() {
-                Some(v) => *v,
-                None => continue, // have no sample
-            };
-            values.push(
-                // XXX-FIXME: an instant query can return any valid PromQL
-                // expression type (string, scalar, instant and range vectors).
-                //
-                // See https://promlabs.com/blog/2020/06/18/the-anatomy-of-a-promql-query/#instant-queries
-                InstantValue {
-                    labels: metric.labels.clone(),
-                    value,
-                },
-            );
-        }
-        Ok(values)
+        let metrics = self.selector_fetch(selector, None).await?;
+        Ok(metrics
+            .iter()
+            .filter_map(|series| {
+                let sample = series.samples.last()?;
+                Some(
+                    // XXX-FIXME: an instant query can return any valid PromQL
+                    // expression type (string, scalar, instant and range vectors).
+                    //
+                    // See https://promlabs.com/blog/2020/06/18/the-anatomy-of-a-promql-query/#instant-queries
+                    InstantValue {
+                        metric: series.metric.clone(),
+                        sample: *sample,
+                    },
+                )
+            })
+            .collect())
     }
 
     /// MatrixSelector is a special case of VectorSelector that returns a matrix of samples.
@@ -230,44 +240,66 @@ impl QueryEngine {
         selector: &VectorSelector,
         range: Duration,
     ) -> Result<Vec<RangeValue>> {
-        let metrics_name = selector.name.as_ref().unwrap();
-        if !self.data_cache.contains_key(metrics_name) {
-            self.selector_load_data(selector, Some(range)).await?;
-        }
-        let cache_data = match self.data_cache.get(metrics_name) {
-            Some(v) => match v.get_ref_matrix_values() {
-                Some(v) => v,
-                None => return Ok(vec![]),
-            },
-            None => return Ok(vec![]),
-        };
+        let metrics = self.selector_fetch(selector, Some(range)).await?;
 
         let end = self.start + (self.interval * self.time_window_idx); // 15s
         let start = end - micros(range); // 5m
 
-        let mut values = Vec::with_capacity(cache_data.len());
-        for metric in cache_data {
-            let metric_data = metric
-                .values
-                .iter()
-                .filter(|v| v.timestamp > start && v.timestamp <= end)
-                .cloned()
-                .collect::<Vec<_>>();
-            values.push(RangeValue {
-                labels: metric.labels.clone(),
-                time_range: Some((start, end)),
-                values: metric_data,
-            });
-        }
-        Ok(values)
+        Ok(metrics
+            .iter()
+            .map(|series| {
+                // XXX-OPTIMIZE: since samples are sorted by timestamp, it may
+                // be more efficient to find the [range] of `series.samples`
+                // with timestamps within (start; end] and [drain] the rest
+                // of the samples.
+                //
+                // [drain]: https://doc.rust-lang.org/std/vec/struct.Vec.html#method.drain
+                // [range]: https://doc.rust-lang.org/std/ops/trait.RangeBounds.html
+                //XXX let samples = series
+                //XXX     .samples
+                //XXX     .iter()
+                //XXX     .filter(|s| s.timestamp > start && s.timestamp <= end)
+                //XXX     .cloned()
+                //XXX     .collect();
+                let mut samples = series
+                    .samples
+                    // XXX-OPTIMIZE: avoid clone
+                    .clone();
+                samples.retain(|v| v.timestamp > start && v.timestamp <= end);
+                RangeValue {
+                    metric: series.metric.clone(),
+                    samples,
+                    time_range: Some((start, end)),
+                }
+            })
+            .collect())
     }
 
-    async fn selector_load_data(
+    /// Loads time series data from `cache` if it exists, otherwise loads it
+    /// from DataFusion and caches.
+    async fn selector_fetch(
         &mut self,
         selector: &VectorSelector,
         range: Option<Duration>,
-    ) -> Result<()> {
-        tracing::info!("selector_load_data: start");
+    ) -> Result<Arc<Vec<Series>>> {
+        // XXX-TODO: support PromQL queries without metric name, e.g. `{__name__=~"foo.*"}`
+        let metric_name = selector.name.as_ref().unwrap();
+        if let Some(metrics) = self.metrics_cache.get(metric_name) {
+            return Ok(Arc::clone(metrics));
+        }
+        let metrics = Arc::new(self.selector_load_from_df(selector, range).await?);
+        self.metrics_cache
+            .insert(metric_name.to_owned(), Arc::clone(&metrics));
+        Ok(metrics)
+    }
+
+    /// Loads time series data from DataFusion.
+    #[tracing::instrument(skip_all)]
+    async fn selector_load_from_df(
+        &mut self,
+        selector: &VectorSelector,
+        range: Option<Duration>,
+    ) -> Result<Vec<Series>> {
         let table_name = selector.name.as_ref().unwrap();
         let table = self.ctx.table(table_name).await?;
 
@@ -276,42 +308,42 @@ impl QueryEngine {
             let lookback_delta = range.map_or(self.lookback_delta, micros);
             self.start + (self.interval * self.time_window_idx) - lookback_delta
         };
-        let end = self.end; // 30 minutes + 5m = 35m
+        let end = self.end;
 
-        // 1. Group by metrics (sets of label name-value pairs)
-        let mut df_group = table.clone().filter(
+        let mut df = table.clone().filter(
             col(FIELD_TIME)
                 .gt(lit(start))
                 .and(col(FIELD_TIME).lt_eq(lit(end))),
         )?;
-        let regexp_match_udf = super::datafusion::regexp_udf::REGEX_MATCH_UDF.clone();
-        let regexp_not_match_udf = super::datafusion::regexp_udf::REGEX_NOT_MATCH_UDF.clone();
+        let regexp_match_udf = regexp_udf::REGEX_MATCH_UDF.clone();
+        let regexp_not_match_udf = regexp_udf::REGEX_NOT_MATCH_UDF.clone();
         for mat in selector.matchers.matchers.iter() {
             match &mat.op {
                 MatchOp::Equal => {
-                    df_group = df_group.filter(col(mat.name.clone()).eq(lit(mat.value.clone())))?
+                    df = df.filter(col(mat.name.clone()).eq(lit(mat.value.clone())))?
                 }
                 MatchOp::NotEqual => {
-                    df_group =
-                        df_group.filter(col(mat.name.clone()).not_eq(lit(mat.value.clone())))?
+                    df = df.filter(col(mat.name.clone()).not_eq(lit(mat.value.clone())))?
                 }
                 MatchOp::Re(_re) => {
-                    df_group = df_group.filter(
+                    df = df.filter(
                         regexp_match_udf.call(vec![col(mat.name.clone()), lit(mat.value.clone())]),
                     )?
                 }
                 MatchOp::NotRe(_re) => {
-                    df_group = df_group.filter(
+                    df = df.filter(
                         regexp_not_match_udf
                             .call(vec![col(mat.name.clone()), lit(mat.value.clone())]),
                     )?
                 }
             }
         }
-        tracing::info!("selector_load_data: loaded metrics 0");
-        let batches = df_group.collect().await?;
-        tracing::info!("selector_load_data: loaded metrics 1");
-        let mut metrics: FxHashMap<String, RangeValue> = FxHashMap::default();
+        tracing::info!("loaded metrics 0");
+
+        let batches = df.collect().await?;
+        tracing::info!("loaded metrics 1");
+
+        let mut metrics = FxIndexMap::<String, Series>::default();
         for batch in &batches {
             let hash_values = batch
                 .column_by_name(FIELD_HASH)
@@ -334,70 +366,59 @@ impl QueryEngine {
             for i in 0..batch.num_rows() {
                 let hash = hash_values.value(i).to_string();
                 let entry = metrics.entry(hash).or_insert_with(|| {
-                    let mut labels = Vec::new();
-                    for (k, v) in batch.schema().fields().iter().zip(batch.columns()) {
-                        let name = k.name();
-                        if name == FIELD_TIME || name == FIELD_VALUE {
-                            continue;
-                        }
-                        let value = v.as_any().downcast_ref::<StringArray>().unwrap();
-                        labels.push(Arc::new(Label {
-                            name: name.to_string(),
-                            value: value.value(i).to_string(),
-                        }));
-                    }
-                    labels.sort_by(|a, b| a.name.cmp(&b.name));
-                    RangeValue {
-                        labels,
-                        time_range: None,
-                        values: Vec::with_capacity(20),
+                    let metric = Labels::new(
+                        batch
+                            .schema()
+                            .fields()
+                            .iter()
+                            .zip(batch.columns())
+                            .filter_map(|(k, v)| {
+                                let name = k.name();
+                                if name == FIELD_TIME || name == FIELD_VALUE {
+                                    // surprisingly, we can use `return` in a
+                                    // closure
+                                    return None;
+                                }
+                                let value = v.as_any().downcast_ref::<StringArray>().unwrap();
+                                Some((name.to_string(), value.value(i).to_string()))
+                            }),
+                    );
+                    Series {
+                        metric,
+                        samples: Vec::with_capacity(20),
                     }
                 });
-                entry.values.push(Sample {
+                entry.samples.push(Sample {
                     timestamp: time_values.value(i),
                     value: value_values.value(i),
                 });
             }
         }
-        tracing::info!("selector_load_data: loaded samples");
+        tracing::info!("loaded samples");
 
-        // We don't need the primary key (FIELD_HASH) any more
-        let mut metric_values = metrics.into_values().collect::<Vec<_>>();
-
-        // Fix data about app restart
-        for metric in metric_values.iter_mut() {
-            let metric_type = metric
-                .labels
-                .iter()
-                .find(|v| v.name == FIELD_TYPE)
-                .unwrap()
-                .value
-                .clone();
-            if metric_type != TYPE_COUNTER {
-                continue;
-            }
-            let mut delta: f64 = 0.0;
-            let mut last_value = 0.0;
-            for sample in metric.values.iter_mut() {
-                if last_value > sample.value {
-                    delta += last_value;
+        let metrics = metrics
+            // we don't need the primary key (FIELD_HASH) any more
+            .into_values()
+            .map(|mut series| {
+                if &series.metric[FIELD_TYPE] == TYPE_COUNTER {
+                    // Deal with counter resets.
+                    // See <https://promlabs.com/blog/2021/01/29/how-exactly-does-promql-calculate-rates/#dealing-with-counter-resets>
+                    let mut delta: f64 = 0.0;
+                    let mut last_value = 0.0;
+                    for sample in series.samples.iter_mut() {
+                        if last_value > sample.value {
+                            delta += last_value;
+                        }
+                        last_value = sample.value;
+                        if delta > 0.0 {
+                            sample.value += delta;
+                        }
+                    }
                 }
-                last_value = sample.value;
-                if delta > 0.0 {
-                    sample.value += delta;
-                }
-            }
-        }
-
-        // cache data
-        let values = if metric_values.is_empty() {
-            Value::None
-        } else {
-            Value::Matrix(metric_values)
-        };
-        self.data_cache.insert(table_name.to_string(), values);
-        tracing::info!("selector_load_data: loaded cache");
-        Ok(())
+                series
+            })
+            .collect();
+        Ok(metrics)
     }
 
     async fn aggregate_exprs(
@@ -433,8 +454,6 @@ impl QueryEngine {
     }
 
     async fn call_expr(&mut self, func: &Function, args: &FunctionArgs) -> Result<Value> {
-        use crate::functions::Func;
-
         let func_name = Func::from_str(func.name).map_err(|_| {
             DataFusionError::Internal(format!("Unsupported function: {}", func.name))
         })?;

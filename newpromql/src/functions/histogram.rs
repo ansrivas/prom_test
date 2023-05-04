@@ -1,7 +1,10 @@
 use datafusion::error::{DataFusionError, Result};
 use rustc_hash::FxHashMap;
 
-use crate::value::{self, InstantValue, Labels, Signature, Value};
+use crate::{
+    labels::{self, Labels},
+    value::{self, InstantValue, Value},
+};
 
 // https://github.com/prometheus/prometheus/blob/cf1bea344a3c390a90c35ea8764c4a468b345d5e/promql/quantile.go#L33
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -13,7 +16,7 @@ struct Bucket {
 // https://github.com/prometheus/prometheus/blob/cf1bea344a3c390a90c35ea8764c4a468b345d5e/promql/quantile.go#L45
 #[derive(Debug)]
 struct MetricWithBuckets {
-    labels: Labels,
+    metric: Labels,
     buckets: Vec<Bucket>,
 }
 
@@ -30,40 +33,33 @@ pub(crate) fn histogram_quantile(sample_time: i64, phi: f64, data: Value) -> Res
         }
     };
 
-    let mut metrics_with_buckets: FxHashMap<Signature, MetricWithBuckets> = FxHashMap::default();
-    for InstantValue {
-        mut labels,
-        value: sample,
-    } in in_vec
-    {
-        // [https://prometheus.io/docs/prometheus/latest/querying/functions/#histogram_quantile]:
+    let mut metrics_with_buckets = FxHashMap::<labels::Signature, MetricWithBuckets>::default();
+    for InstantValue { mut metric, sample } in in_vec {
+        // <https://prometheus.io/docs/prometheus/latest/querying/functions/#histogram_quantile>:
         //
         // The conventional float samples in `in_vec` are considered the counts
-        // of observations in each bucket of one or more conventional
-        // histograms. Each float sample must have a label `le` where the label
-        // value denotes the inclusive upper bound of the bucket. *Float samples
-        // without such a label are silently ignored.*
-        let upper_bound: f64 = match labels
-            .iter()
-            .find(|v| v.name == "le")
-            .map(|s| s.value.parse())
-        {
+        // of observations in each bucket of one or more conventional histograms.
+        // Each float sample must have a label `le` where the label value denotes
+        // the inclusive upper bound of the bucket. (Float samples without such a
+        // label are silently ignored.)
+        let upper_bound: f64 = match metric.get(value::FIELD_BUCKET).map(str::parse) {
             Some(Ok(u)) => u,
             None | Some(Err(_)) => continue,
         };
 
-        let sig = value::signature_without_labels(
-            &labels,
-            &[value::FIELD_HASH, value::FIELD_NAME, value::FIELD_BUCKET],
-        );
+        let sig = metric.signature_without_labels(&[
+            value::FIELD_HASH,
+            value::FIELD_NAME,
+            value::FIELD_BUCKET,
+        ]);
         let entry = metrics_with_buckets.entry(sig).or_insert_with(|| {
-            labels.retain(|l| {
+            metric.retain(|l| {
                 l.name != value::FIELD_HASH
                     || l.name != value::FIELD_NAME
                     || l.name != value::FIELD_BUCKET
             });
             MetricWithBuckets {
-                labels,
+                metric,
                 buckets: Vec::new(),
             }
         });
@@ -76,8 +72,8 @@ pub(crate) fn histogram_quantile(sample_time: i64, phi: f64, data: Value) -> Res
     let values = metrics_with_buckets
         .into_values()
         .map(|mb| value::InstantValue {
-            labels: mb.labels,
-            value: value::Sample {
+            metric: mb.metric,
+            sample: value::Sample {
                 timestamp: sample_time,
                 value: bucket_quantile(phi, mb.buckets),
             },

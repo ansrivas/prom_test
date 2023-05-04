@@ -7,10 +7,10 @@ pub(crate) fn max_over_time(data: &Value) -> Result<Value> {
 }
 
 fn exec(data: &RangeValue) -> f64 {
-    if data.values.is_empty() {
+    if data.samples.is_empty() {
         return 0.0;
     }
-    data.values
+    data.samples
         .iter()
         .map(|s| s.value)
         .max_by(|a, b| a.partial_cmp(b).unwrap())

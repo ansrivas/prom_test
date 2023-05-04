@@ -7,5 +7,5 @@ pub(crate) fn count_over_time(data: &Value) -> Result<Value> {
 }
 
 fn exec(data: &RangeValue) -> f64 {
-    data.values.len() as f64
+    data.samples.len() as f64
 }

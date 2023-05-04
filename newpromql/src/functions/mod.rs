@@ -101,15 +101,12 @@ pub(crate) fn eval_idelta(
 
     let rate_values = data
         .iter()
-        .map(|metric| {
-            let value = fn_handler(metric);
-            InstantValue {
-                labels: metric.labels.clone(),
-                value: Sample {
-                    timestamp: metric.time_range.unwrap().1,
-                    value,
-                },
-            }
+        .map(|rval| InstantValue {
+            metric: rval.metric.clone(),
+            sample: Sample {
+                timestamp: rval.time_range.unwrap().1,
+                value: fn_handler(rval),
+            },
         })
         .collect();
     Ok(Value::Vector(rate_values))

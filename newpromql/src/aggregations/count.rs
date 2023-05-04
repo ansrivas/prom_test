@@ -1,7 +1,7 @@
 use datafusion::error::Result;
 use promql_parser::parser::LabelModifier;
 
-use crate::value::{InstantValue, Sample, Value};
+use crate::value::Value;
 
 pub fn count(timestamp: i64, param: &Option<LabelModifier>, data: &Value) -> Result<Value> {
     let score_values = super::eval_arithmetic(param, data, "count", |_prev, _val| 0.0)?;
@@ -10,14 +10,8 @@ pub fn count(timestamp: i64, param: &Option<LabelModifier>, data: &Value) -> Res
     }
     let values = score_values
         .unwrap()
-        .values()
-        .map(|v| InstantValue {
-            labels: v.labels.clone(),
-            value: Sample {
-                timestamp,
-                value: v.num as f64,
-            },
-        })
-        .collect::<Vec<_>>();
+        .into_values()
+        .map(|x| x.into_instant_value(timestamp, |x| x.num as f64))
+        .collect();
     Ok(Value::Vector(values))
 }

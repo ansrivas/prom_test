@@ -7,13 +7,10 @@ pub(crate) fn idelta(data: &Value) -> Result<Value> {
 }
 
 fn exec(data: &RangeValue) -> f64 {
-    if data.values.len() <= 1 {
+    if data.samples.len() < 2 {
         return 0.0;
     }
-    let (last, data) = data.values.split_last().unwrap();
-    let previous = match data.last() {
-        Some(v) => v,
-        None => return 0.0,
-    };
-    last.value - previous.value
+    let (last, rest) = data.samples.split_last().unwrap();
+    rest.last()
+        .map_or(0.0, |before_last| last.value - before_last.value)
 }
