@@ -2064,7 +2064,6 @@ dependencies = [
  "datafusion",
  "expect-test",
  "hex",
- "indexmap",
  "itertools",
  "once_cell",
  "prom-test",

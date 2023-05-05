@@ -4,7 +4,6 @@ use datafusion::{
     error::{DataFusionError, Result},
     prelude::{col, lit, SessionContext},
 };
-use indexmap::IndexMap;
 use promql_parser::{
     label::MatchOp,
     parser::{
@@ -21,9 +20,6 @@ use std::{
 };
 
 use crate::{aggregations, functions, value::*};
-
-// See https://docs.rs/indexmap/latest/indexmap/#alternate-hashers
-type FxIndexMap<K, V> = IndexMap<K, V, std::hash::BuildHasherDefault<rustc_hash::FxHasher>>;
 
 pub struct QueryEngine {
     ctx: Arc<SessionContext>,
@@ -290,7 +286,7 @@ impl QueryEngine {
         tracing::info!("selector_load_data: loaded metrics 0");
         let batches = df_group.collect().await?;
         tracing::info!("selector_load_data: loaded metrics 1");
-        let mut metrics = FxIndexMap::<String, RangeValue>::default();
+        let mut metrics: FxHashMap<String, RangeValue> = Default::default();
         for batch in &batches {
             let hash_values = batch
                 .column_by_name(FIELD_HASH)
