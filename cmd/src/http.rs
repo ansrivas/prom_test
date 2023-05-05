@@ -13,6 +13,7 @@ pub async fn server(ctx: SessionContext) {
         .route("/", get(api::index))
         .route("/api/v1/query", get(api::query).post(api::query))
         .route("/api/v1/query_range", get(api::query).post(api::query))
+        .route("/api/v1/metadata", get(api::metadata))
         .with_state(Arc::new(ctx))
         .layer(
             TraceLayer::new_for_http()

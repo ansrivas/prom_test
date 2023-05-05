@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use std::{
+    collections::HashMap,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -25,7 +26,14 @@ use datafusion::prelude::SessionContext;
 use promql_parser::parser;
 use serde::{Deserialize, Serialize};
 
-#[derive(Deserialize)]
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Status {
+    Success,
+    Error,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct QueryRequest {
     pub query: String,
     pub time: Option<i64>,
@@ -35,23 +43,47 @@ pub struct QueryRequest {
     pub timeout: Option<i64>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QueryResult {
     pub result_type: String, // vector, matrix, scalar, string
     pub result: newpromql::value::Value,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QueryResponse {
-    pub status: String, // success, error
+    pub status: Status,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<QueryResult>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MetadataRequest {
+    /// Maximum number of metrics to return.
+    pub limit: Option<usize>,
+    /// A metric name to filter metadata for. All metric metadata is retrieved
+    /// if left empty.
+    pub metric: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MetadataResponse {
+    pub status: Status,
+    /// key - metric name
+    pub data: HashMap<String, Vec<MetadataObject>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MetadataObject {
+    #[serde(rename = "type")]
+    typ: String, // counter, gauge, histogram, summary
+    help: String,
+    unit: String,
 }
 
 pub async fn index() -> String {
@@ -68,7 +100,7 @@ pub async fn query(
         Ok(expr) => expr,
         Err(e) => {
             return Json(QueryResponse {
-                status: "error".to_string(),
+                status: Status::Error,
                 data: None,
                 error_type: Some("bad_data".to_string()),
                 error: Some(e),
@@ -100,7 +132,7 @@ pub async fn query(
     let mut engine = newpromql::QueryEngine::new(ctx);
     let response = match engine.exec(eval_stmt).await {
         Ok(data) => QueryResponse {
-            status: "success".to_string(),
+            status: Status::Success,
             data: Some(QueryResult {
                 result_type: data.get_type().to_string(),
                 result: data,
@@ -109,7 +141,7 @@ pub async fn query(
             error: None,
         },
         Err(e) => QueryResponse {
-            status: "error".to_string(),
+            status: Status::Error,
             data: None,
             error_type: Some("bad_data".to_string()),
             error: Some(e.to_string()),
@@ -118,4 +150,26 @@ pub async fn query(
     // tracing::info!("execute time: {}", start_time.elapsed());
 
     Json(response)
+}
+
+pub async fn metadata(
+    req: Query<MetadataRequest>,
+    State(ctx): State<Arc<SessionContext>>,
+) -> Json<MetadataResponse> {
+    let catalog = ctx.catalog("datafusion").unwrap();
+    let schema = catalog.schema("public").unwrap();
+    let table_names = schema.table_names().into_iter().map(|name| {
+        (
+            name,
+            vec![
+                // XXX-TODO: fill with `MetadataObject`s
+            ],
+        )
+    });
+    Json(MetadataResponse {
+        status: Status::Success,
+        data: req.limit.map_or(table_names.clone().collect(), |limit| {
+            table_names.take(limit).collect()
+        }),
+    })
 }
