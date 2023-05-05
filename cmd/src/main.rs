@@ -1,10 +1,12 @@
-use clap::Parser;
-use color_eyre::eyre::{eyre, Result};
-use promql_parser::parser;
 use std::{
     sync::Arc,
     time::{Duration, UNIX_EPOCH},
 };
+
+use clap::Parser;
+use color_eyre::eyre::{eyre, Result};
+use promql_parser::parser;
+use tracing_subscriber::{fmt::Subscriber, EnvFilter};
 
 mod api;
 mod http;
@@ -31,10 +33,14 @@ Examples:
 #[tokio::main]
 async fn main() -> Result<()> {
     color_eyre::install()?;
-    tracing_subscriber::fmt()
+
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let subscriber = Subscriber::builder()
+        .with_env_filter(filter)
         .with_target(false)
         .compact()
-        .init();
+        .finish();
+    tracing::subscriber::set_global_default(subscriber)?;
 
     let cli = Cli::parse();
     let start_time = time::Instant::now();
