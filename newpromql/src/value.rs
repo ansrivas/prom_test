@@ -1,4 +1,3 @@
-use rustc_hash::FxHashMap;
 use serde::{
     ser::{SerializeSeq, SerializeStruct, Serializer},
     Serialize,
@@ -16,6 +15,10 @@ pub const TYPE_COUNTER: &str = "counter";
 pub const TYPE_GAUGE: &str = "gauge";
 pub const TYPE_HISTOGRAM: &str = "histogram";
 pub const TYPE_SUMMARY: &str = "summary";
+
+// See https://docs.rs/indexmap/latest/indexmap/#alternate-hashers
+type FxIndexMap<K, V> =
+    indexmap::IndexMap<K, V, std::hash::BuildHasherDefault<rustc_hash::FxHasher>>;
 
 pub type Labels = Vec<Arc<Label>>;
 
@@ -60,7 +63,7 @@ impl Serialize for InstantValue {
             .labels
             .iter()
             .map(|l| (l.name.as_str(), l.value.as_str()))
-            .collect::<FxHashMap<_, _>>();
+            .collect::<FxIndexMap<_, _>>();
         seq.serialize_field("metric", &labels_map)?;
         seq.serialize_field("value", &self.value)?;
         seq.end()
@@ -84,7 +87,7 @@ impl Serialize for RangeValue {
             .labels
             .iter()
             .map(|l| (l.name.as_str(), l.value.as_str()))
-            .collect::<FxHashMap<_, _>>();
+            .collect::<FxIndexMap<_, _>>();
         seq.serialize_field("metric", &labels_map)?;
         seq.serialize_field("values", &self.values)?;
         seq.end()
@@ -157,6 +160,13 @@ pub enum Value {
 }
 
 impl Value {
+    pub(crate) fn get_ref_matrix_values(&self) -> Option<&Vec<RangeValue>> {
+        match self {
+            Value::Matrix(values) => Some(values),
+            _ => None,
+        }
+    }
+
     pub fn get_type(&self) -> &str {
         match self {
             Value::Instant(_) => "vector",

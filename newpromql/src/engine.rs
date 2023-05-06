@@ -36,7 +36,7 @@ pub struct QueryEngine {
     /// [range query]: https://promlabs.com/blog/2020/06/18/the-anatomy-of-a-promql-query/#range-queries
     time_window_idx: i64,
     /// key — metric name; value — time series data
-    metrics_cache: FxHashMap<String, Arc<Vec<RangeValue>>>,
+    metrics_cache: FxHashMap<String, Value>,
 }
 
 impl QueryEngine {
@@ -50,7 +50,7 @@ impl QueryEngine {
             interval: five_min,
             lookback_delta: five_min,
             time_window_idx: 0,
-            metrics_cache: Default::default(),
+            metrics_cache: FxHashMap::default(),
         }
     }
 
@@ -193,20 +193,36 @@ impl QueryEngine {
         &mut self,
         selector: &VectorSelector,
     ) -> Result<Vec<InstantValue>> {
-        let metrics = self.selector_load_data(selector, None).await?;
-        Ok(metrics
-            .iter()
-            .filter_map(|series| {
-                let sample = series.values.last()?;
-                Some(
-                    // See https://promlabs.com/blog/2020/06/18/the-anatomy-of-a-promql-query/#instant-queries
-                    InstantValue {
-                        labels: series.labels.clone(),
-                        value: *sample,
-                    },
-                )
-            })
-            .collect())
+        let metrics_name = selector.name.as_ref().unwrap();
+        if !self.metrics_cache.contains_key(metrics_name) {
+            self.selector_load_data(selector, None).await?;
+        }
+        let metrics_cache = match self.metrics_cache.get(metrics_name) {
+            Some(v) => match v.get_ref_matrix_values() {
+                Some(v) => v,
+                None => return Ok(vec![]),
+            },
+            None => return Ok(vec![]),
+        };
+
+        let mut values = vec![];
+        for metric in metrics_cache {
+            let value = match metric.values.last() {
+                Some(v) => *v,
+                None => continue, // have no sample
+            };
+            values.push(
+                // XXX-FIXME: an instant query can return any valid PromQL
+                // expression type (string, scalar, instant and range vectors).
+                //
+                // See https://promlabs.com/blog/2020/06/18/the-anatomy-of-a-promql-query/#instant-queries
+                InstantValue {
+                    labels: metric.labels.clone(),
+                    value,
+                },
+            );
+        }
+        Ok(values)
     }
 
     /// MatrixSelector is a special case of VectorSelector that returns a matrix of samples.
@@ -215,36 +231,43 @@ impl QueryEngine {
         selector: &VectorSelector,
         range: Duration,
     ) -> Result<Vec<RangeValue>> {
-        let metrics = self.selector_load_data(selector, Some(range)).await?;
+        let metrics_name = selector.name.as_ref().unwrap();
+        if !self.metrics_cache.contains_key(metrics_name) {
+            self.selector_load_data(selector, Some(range)).await?;
+        }
+        let metrics_cache = match self.metrics_cache.get(metrics_name) {
+            Some(v) => match v.get_ref_matrix_values() {
+                Some(v) => v,
+                None => return Ok(vec![]),
+            },
+            None => return Ok(vec![]),
+        };
 
         let end = self.start + (self.interval * self.time_window_idx); // 15s
         let start = end - micros(range); // 5m
 
-        Ok(metrics
-            .iter()
-            .map(|series| {
-                let mut values = series.values.clone();
-                values.retain(|v| v.timestamp > start && v.timestamp <= end);
-                RangeValue {
-                    labels: series.labels.clone(),
-                    values,
-                    time_range: Some((start, end)),
-                }
-            })
-            .collect())
+        let mut values = Vec::with_capacity(metrics_cache.len());
+        for metric in metrics_cache {
+            let metric_data = metric
+                .values
+                .iter()
+                .filter(|v| v.timestamp > start && v.timestamp <= end)
+                .cloned()
+                .collect::<Vec<_>>();
+            values.push(RangeValue {
+                labels: metric.labels.clone(),
+                time_range: Some((start, end)),
+                values: metric_data,
+            });
+        }
+        Ok(values)
     }
 
     async fn selector_load_data(
         &mut self,
         selector: &VectorSelector,
         range: Option<Duration>,
-    ) -> Result<Arc<Vec<RangeValue>>> {
-        tracing::info!("selector_load_data: start");
-        let table_name = selector.name.as_ref().unwrap();
-        if let Some(v) = self.metrics_cache.get(table_name) {
-            return Ok(v.clone());
-        }
-
+    ) -> Result<()> {
         let start = {
             // https://promlabs.com/blog/2020/07/02/selecting-data-in-promql/#lookback-delta
             let lookback_delta = range.map_or(self.lookback_delta, micros);
@@ -253,6 +276,7 @@ impl QueryEngine {
         let end = self.end; // 30 minutes + 5m = 35m
 
         // 1. Group by metrics (sets of label name-value pairs)
+        let table_name = selector.name.as_ref().unwrap();
         let table = self.ctx.table(table_name).await?;
         let mut df_group = table.clone().filter(
             col(FIELD_TIME)
@@ -283,10 +307,9 @@ impl QueryEngine {
                 }
             }
         }
-        tracing::info!("selector_load_data: loaded metrics 0");
         let batches = df_group.collect().await?;
-        tracing::info!("selector_load_data: loaded metrics 1");
-        let mut metrics: FxHashMap<String, RangeValue> = Default::default();
+
+        let mut metrics: FxHashMap<String, RangeValue> = FxHashMap::default();
         for batch in &batches {
             let hash_values = batch
                 .column_by_name(FIELD_HASH)
@@ -309,23 +332,18 @@ impl QueryEngine {
             for i in 0..batch.num_rows() {
                 let hash = hash_values.value(i).to_string();
                 let entry = metrics.entry(hash).or_insert_with(|| {
-                    let mut labels = batch
-                        .schema()
-                        .fields()
-                        .iter()
-                        .zip(batch.columns())
-                        .filter_map(|(k, v)| {
-                            let name = k.name();
-                            if name == FIELD_TIME || name == FIELD_VALUE {
-                                return None;
-                            }
-                            let value = v.as_any().downcast_ref::<StringArray>().unwrap();
-                            Some(Arc::new(Label {
-                                name: name.to_string(),
-                                value: value.value(i).to_string(),
-                            }))
-                        })
-                        .collect::<Vec<_>>();
+                    let mut labels = Vec::with_capacity(batch.num_columns());
+                    for (k, v) in batch.schema().fields().iter().zip(batch.columns()) {
+                        let name = k.name();
+                        if name == FIELD_HASH || name == FIELD_TIME || name == FIELD_VALUE {
+                            continue;
+                        }
+                        let value = v.as_any().downcast_ref::<StringArray>().unwrap();
+                        labels.push(Arc::new(Label {
+                            name: name.to_string(),
+                            value: value.value(i).to_string(),
+                        }));
+                    }
                     labels.sort_by(|a, b| a.name.cmp(&b.name));
                     RangeValue {
                         labels,
@@ -339,38 +357,38 @@ impl QueryEngine {
                 });
             }
         }
-        tracing::info!("selector_load_data: loaded samples");
 
         // We don't need the primary key (FIELD_HASH) any more
-        let metrics: Vec<RangeValue> = metrics
-            // we don't need the primary key (FIELD_HASH) any more
-            .into_values()
-            .map(|mut series| {
-                if labels_value(&series.labels, FIELD_TYPE).unwrap() == TYPE_COUNTER {
-                    // Deal with counter resets.
-                    // See <https://promlabs.com/blog/2021/01/29/how-exactly-does-promql-calculate-rates/#dealing-with-counter-resets>
-                    let mut delta: f64 = 0.0;
-                    let mut last_value = 0.0;
-                    for sample in series.values.iter_mut() {
-                        if last_value > sample.value {
-                            delta += last_value;
-                        }
-                        last_value = sample.value;
-                        if delta > 0.0 {
-                            sample.value += delta;
-                        }
-                    }
+        let mut metric_values = metrics.into_values().collect::<Vec<_>>();
+
+        // Fix data about app restart
+        for series in metric_values.iter_mut() {
+            if let Some(metric_type) = labels_value(&series.labels, FIELD_TYPE) {
+                if metric_type != TYPE_COUNTER {
+                    continue;
                 }
-                series
-            })
-            .collect();
+            }
+            let mut delta: f64 = 0.0;
+            let mut last_value = 0.0;
+            for sample in series.values.iter_mut() {
+                if last_value > sample.value {
+                    delta += last_value;
+                }
+                last_value = sample.value;
+                if delta > 0.0 {
+                    sample.value += delta;
+                }
+            }
+        }
 
-        let metrics = Arc::new(metrics);
-        self.metrics_cache
-            .insert(table_name.to_owned(), metrics.clone());
-        tracing::info!("selector_load_data: loaded cache");
-
-        Ok(metrics)
+        // cache data
+        let values = if metric_values.is_empty() {
+            Value::None
+        } else {
+            Value::Matrix(metric_values)
+        };
+        self.metrics_cache.insert(table_name.to_string(), values);
+        Ok(())
     }
 
     async fn aggregate_exprs(
