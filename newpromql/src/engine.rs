@@ -435,7 +435,7 @@ impl QueryEngine {
             .expect("BUG: promql-parser should have validated function arguments");
         let input = self.exec_expr(&last_arg).await?;
 
-        Ok(match func_name {
+        let ret = match func_name {
             Func::Abs => todo!(),
             Func::Absent => todo!(),
             Func::AbsentOverTime => todo!(),
@@ -508,7 +508,13 @@ impl QueryEngine {
             Func::Timestamp => todo!(),
             Func::Vector => todo!(),
             Func::Year => todo!(),
-        })
+        };
+        Ok(
+            // All range vector functions drop the metric name in the output.
+            //
+            // Reference: https://github.com/prometheus/prometheus/blob/3c4802635d05af47ddf7358c0c079961b011c47b/promql/engine.go#L1458-L1464
+            ret.drop_metric_name(),
+        )
     }
 }
 

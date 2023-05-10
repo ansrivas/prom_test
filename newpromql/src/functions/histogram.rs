@@ -45,7 +45,7 @@ pub(crate) fn histogram_quantile(sample_time: i64, phi: f64, data: Value) -> Res
         // without such a label are silently ignored.*
         let upper_bound: f64 = match labels
             .iter()
-            .find(|v| v.name == "le")
+            .find(|l| l.name == value::FIELD_BUCKET)
             .map(|s| s.value.parse())
         {
             Some(Ok(u)) => u,
@@ -59,8 +59,8 @@ pub(crate) fn histogram_quantile(sample_time: i64, phi: f64, data: Value) -> Res
         let entry = metrics_with_buckets.entry(sig).or_insert_with(|| {
             labels.retain(|l| {
                 l.name != value::FIELD_HASH
-                    || l.name != value::FIELD_NAME
-                    || l.name != value::FIELD_BUCKET
+                    && l.name != value::FIELD_NAME
+                    && l.name != value::FIELD_BUCKET
             });
             MetricWithBuckets {
                 labels,

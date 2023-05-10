@@ -20,7 +20,17 @@ pub const TYPE_SUMMARY: &str = "summary";
 type FxIndexMap<K, V> =
     indexmap::IndexMap<K, V, std::hash::BuildHasherDefault<rustc_hash::FxHasher>>;
 
+// XXX-TODO: move this to `labels.rs` module;
+// see <https://github.com/zinclabs/prom_test/blob/6fe6e81c594623a0291f5ddc0a53ea369693c86f/newpromql/src/labels.rs>
 pub type Labels = Vec<Arc<Label>>;
+
+/// Drops the `__name__` label.
+pub(crate) fn labels_drop_metric_name(mut labels: Labels) -> Labels {
+    if let Some(index) = labels.iter().position(|label| label.name == FIELD_NAME) {
+        labels.remove(index);
+    }
+    labels
+}
 
 #[derive(Debug, Clone)]
 pub struct Label {
@@ -70,11 +80,29 @@ impl Serialize for InstantValue {
     }
 }
 
+impl InstantValue {
+    fn drop_metric_name(self) -> Self {
+        Self {
+            labels: labels_drop_metric_name(self.labels),
+            ..self
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct RangeValue {
     pub labels: Labels,
     pub time_range: Option<(i64, i64)>, // start, end
     pub values: Vec<Sample>,
+}
+
+impl RangeValue {
+    fn drop_metric_name(self) -> Self {
+        Self {
+            labels: labels_drop_metric_name(self.labels),
+            ..self
+        }
+    }
 }
 
 impl Serialize for RangeValue {
@@ -179,7 +207,7 @@ impl Value {
         }
     }
 
-    pub fn sort(&mut self) {
+    pub(crate) fn sort(&mut self) {
         match self {
             Value::Vector(v) => {
                 v.sort_by(|a, b| {
@@ -197,6 +225,22 @@ impl Value {
                 });
             }
             _ => {}
+        }
+    }
+
+    pub(crate) fn drop_metric_name(self) -> Self {
+        match self {
+            Value::Instant(v) => Value::Instant(v.drop_metric_name()),
+            Value::Range(v) => Value::Range(v.drop_metric_name()),
+            Value::Vector(vs) => {
+                Value::Vector(vs.into_iter().map(InstantValue::drop_metric_name).collect())
+            }
+            Value::Matrix(vs) => {
+                Value::Matrix(vs.into_iter().map(RangeValue::drop_metric_name).collect())
+            }
+            v @ Value::Sample(_) => v,
+            v @ Value::Float(_) => v,
+            v @ Value::None => v,
         }
     }
 }
