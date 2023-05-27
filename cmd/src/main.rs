@@ -83,7 +83,7 @@ async fn main() -> Result<()> {
         lookback_delta: Duration::from_secs(300),
     };
 
-    let mut engine = newpromql::QueryEngine::new(Arc::new(ctx));
+    let mut engine = newpromql::Query::new(Arc::new(ctx));
     let data = engine.exec(eval_stmt).await?;
     if cli.debug {
         dbg!(data);

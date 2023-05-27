@@ -21,12 +21,12 @@ serde.workspace = true
 strum = { version = "0.24", features = ["derive"] }
 time.workspace = true
 tracing = "0.1"
+tokio = { version = "1.27", features = ["full"] }
 
 [dev-dependencies]
 criterion = { version = "0.4", features = ["async_tokio"] }
 expect-test = "1.4"
 prom-test = { path = "../cmd" }
-tokio = { version = "1.27", features = ["full"] }
 
 [[bench]]
 name = "it"

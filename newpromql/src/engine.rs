@@ -2,149 +2,43 @@ use async_recursion::async_recursion;
 use datafusion::{
     arrow::array::{Float64Array, Int64Array, StringArray},
     error::{DataFusionError, Result},
-    prelude::{col, lit, SessionContext},
+    prelude::{col, lit},
 };
 use promql_parser::{
     label::MatchOp,
     parser::{
-        token, AggregateExpr, Call, EvalStmt, Expr as PromExpr, Function, FunctionArgs,
-        LabelModifier, MatrixSelector, NumberLiteral, ParenExpr, TokenType, UnaryExpr,
-        VectorSelector,
+        token, AggregateExpr, Call, Expr as PromExpr, Function, FunctionArgs, LabelModifier,
+        MatrixSelector, NumberLiteral, ParenExpr, TokenType, UnaryExpr, VectorSelector,
     },
 };
 use rustc_hash::FxHashMap;
-use std::{
-    str::FromStr,
-    sync::Arc,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::{str::FromStr, sync::Arc, time::Duration};
 
 use crate::{aggregations, functions, value::*};
 
-pub struct QueryEngine {
-    ctx: Arc<SessionContext>,
-    /// The time boundaries for the evaluation. If start equals end an instant
-    /// is evaluated.
-    start: i64,
-    end: i64,
-    /// Time between two evaluated instants for the range [start:end].
-    interval: i64,
-    /// Default look back from sample search.
-    lookback_delta: i64,
-    /// The index of the current time window. Used when evaluating a [range query].
-    ///
-    /// [range query]: https://promlabs.com/blog/2020/06/18/the-anatomy-of-a-promql-query/#range-queries
-    time_window_idx: i64,
-    /// key — metric name; value — time series data
-    metrics_cache: FxHashMap<String, Value>,
+pub struct Engine {
+    ctx: Arc<super::exec::Query>,
+    /// The time boundaries for the evaluation.
+    time: i64,
+    result_type: Option<String>,
 }
 
-impl QueryEngine {
-    pub fn new(ctx: Arc<SessionContext>) -> Self {
-        let now = micros_since_epoch(SystemTime::now());
-        let five_min = micros(Duration::from_secs(300));
+impl Engine {
+    pub fn new(ctx: Arc<super::exec::Query>, time: i64) -> Self {
         Self {
             ctx,
-            start: now,
-            end: now,
-            interval: five_min,
-            lookback_delta: five_min,
-            time_window_idx: 0,
-            metrics_cache: FxHashMap::default(),
+            time,
+            result_type: None,
         }
     }
 
-    pub async fn exec(&mut self, stmt: EvalStmt) -> Result<Value> {
-        self.start = micros_since_epoch(stmt.start);
-        self.end = micros_since_epoch(stmt.end);
-        if stmt.interval > Duration::ZERO {
-            self.interval = micros(stmt.interval);
-        }
-        if stmt.lookback_delta > Duration::ZERO {
-            self.lookback_delta = micros(stmt.lookback_delta);
-        }
-
-        if self.start == self.end {
-            // Instant query
-            let mut value = self.exec_expr(&stmt.expr).await?;
-            if let Value::Float(v) = value {
-                value = Value::Sample(Sample {
-                    timestamp: self.end,
-                    value: v,
-                });
-            }
-            value.sort();
-            return Ok(value);
-        }
-
-        // Range query
-        // See https://promlabs.com/blog/2020/06/18/the-anatomy-of-a-promql-query/#range-queries
-        let mut instant_vectors = Vec::new();
-        let nr_steps = ((self.end - self.start) / self.interval) + 1;
-        for i in 0..nr_steps {
-            self.time_window_idx = i;
-            match self.exec_expr(&stmt.expr).await? {
-                Value::Instant(v) => instant_vectors.push(RangeValue {
-                    labels: v.labels.to_owned(),
-                    time_range: None,
-                    values: vec![v.value],
-                }),
-                Value::Vector(vs) => instant_vectors.extend(vs.into_iter().map(|v| RangeValue {
-                    labels: v.labels.to_owned(),
-                    time_range: None,
-                    values: vec![v.value],
-                })),
-                Value::Range(v) => instant_vectors.push(v),
-                Value::Matrix(v) => instant_vectors.extend(v),
-                Value::Sample(v) => instant_vectors.push(RangeValue {
-                    labels: Labels::default(),
-                    time_range: None,
-                    values: vec![v],
-                }),
-                Value::Float(v) => instant_vectors.push(RangeValue {
-                    labels: Labels::default(),
-                    time_range: None,
-                    values: vec![Sample {
-                        timestamp: self.start + (self.interval * self.time_window_idx),
-                        value: v,
-                    }],
-                }),
-                Value::None => continue,
-            };
-        }
-
-        // empty result quick return
-        if instant_vectors.is_empty() {
-            return Ok(Value::None);
-        }
-
-        // merge data
-        let mut merged_data = FxHashMap::default();
-        let mut merged_metrics = FxHashMap::default();
-        for value in instant_vectors {
-            merged_data
-                .entry(signature(&value.labels))
-                .or_insert_with(Vec::new)
-                .extend(value.values);
-            merged_metrics.insert(signature(&value.labels), value.labels);
-        }
-        let merged_data = merged_data
-            .into_iter()
-            .map(|(sig, values)| RangeValue {
-                labels: merged_metrics.get(&sig).unwrap().to_owned(),
-                time_range: None,
-                values,
-            })
-            .collect::<Vec<_>>();
-
-        // sort data
-        let mut value = Value::Matrix(merged_data);
-        value.sort();
-        Ok(value)
+    pub async fn exec(&mut self, prom_expr: &PromExpr) -> Result<(Value, Option<String>)> {
+        let value = self.exec_expr(prom_expr).await?;
+        Ok((value, self.result_type.clone()))
     }
 
     #[async_recursion]
-    pub async fn exec_expr(&mut self, prom_expr: &PromExpr) -> Result<Value> {
+    pub async fn exec_expr(&self, prom_expr: &PromExpr) -> Result<Value> {
         Ok(match &prom_expr {
             PromExpr::Aggregate(AggregateExpr {
                 op,
@@ -189,15 +83,14 @@ impl QueryEngine {
     }
 
     /// MatrixSelector is a special case of VectorSelector that returns a matrix of samples.
-    async fn eval_vector_selector(
-        &mut self,
-        selector: &VectorSelector,
-    ) -> Result<Vec<InstantValue>> {
+    async fn eval_vector_selector(&self, selector: &VectorSelector) -> Result<Vec<InstantValue>> {
         let metrics_name = selector.name.as_ref().unwrap();
-        if !self.metrics_cache.contains_key(metrics_name) {
+        let need_load_data = { self.ctx.data_cache.read().await.contains_key(metrics_name) };
+        if !need_load_data {
             self.selector_load_data(selector, None).await?;
         }
-        let metrics_cache = match self.metrics_cache.get(metrics_name) {
+        let metrics_cache = self.ctx.data_cache.read().await;
+        let metrics_cache = match metrics_cache.get(metrics_name) {
             Some(v) => match v.get_ref_matrix_values() {
                 Some(v) => v,
                 None => return Ok(vec![]),
@@ -227,15 +120,17 @@ impl QueryEngine {
 
     /// MatrixSelector is a special case of VectorSelector that returns a matrix of samples.
     async fn eval_matrix_selector(
-        &mut self,
+        &self,
         selector: &VectorSelector,
         range: Duration,
     ) -> Result<Vec<RangeValue>> {
         let metrics_name = selector.name.as_ref().unwrap();
-        if !self.metrics_cache.contains_key(metrics_name) {
-            self.selector_load_data(selector, Some(range)).await?;
+        let need_load_data = { self.ctx.data_cache.read().await.contains_key(metrics_name) };
+        if !need_load_data {
+            self.selector_load_data(selector, None).await?;
         }
-        let metrics_cache = match self.metrics_cache.get(metrics_name) {
+        let metrics_cache = self.ctx.data_cache.read().await;
+        let metrics_cache = match metrics_cache.get(metrics_name) {
             Some(v) => match v.get_ref_matrix_values() {
                 Some(v) => v,
                 None => return Ok(vec![]),
@@ -243,8 +138,8 @@ impl QueryEngine {
             None => return Ok(vec![]),
         };
 
-        let end = self.start + (self.interval * self.time_window_idx); // 15s
-        let start = end - micros(range); // 5m
+        let end = self.time;
+        let start = end - micros(range); // -5m
 
         let mut values = Vec::with_capacity(metrics_cache.len());
         for metric in metrics_cache {
@@ -264,20 +159,17 @@ impl QueryEngine {
     }
 
     async fn selector_load_data(
-        &mut self,
+        &self,
         selector: &VectorSelector,
         range: Option<Duration>,
     ) -> Result<()> {
-        let start = {
-            // https://promlabs.com/blog/2020/07/02/selecting-data-in-promql/#lookback-delta
-            let lookback_delta = range.map_or(self.lookback_delta, micros);
-            self.start + (self.interval * self.time_window_idx) - lookback_delta
-        };
-        let end = self.end; // 30 minutes + 5m = 35m
+        // https://promlabs.com/blog/2020/07/02/selecting-data-in-promql/#lookback-delta
+        let start = self.ctx.start - range.map_or(self.ctx.lookback_delta, micros);
+        let end = self.ctx.end; // 30 minutes + 5m = 35m
 
         // 1. Group by metrics (sets of label name-value pairs)
         let table_name = selector.name.as_ref().unwrap();
-        let table = self.ctx.table(table_name).await?;
+        let table = self.ctx.provider.table(table_name).await?;
         let mut df_group = table.clone().filter(
             col(FIELD_TIME)
                 .gt(lit(start))
@@ -387,18 +279,22 @@ impl QueryEngine {
         } else {
             Value::Matrix(metric_values)
         };
-        self.metrics_cache.insert(table_name.to_string(), values);
+        self.ctx
+            .data_cache
+            .write()
+            .await
+            .insert(table_name.to_string(), values);
         Ok(())
     }
 
     async fn aggregate_exprs(
-        &mut self,
+        &self,
         op: &TokenType,
         expr: &PromExpr,
         param: &Option<Box<PromExpr>>,
         modifier: &Option<LabelModifier>,
     ) -> Result<Value> {
-        let sample_time = self.start + (self.interval * self.time_window_idx);
+        let sample_time = self.time;
         let input = self.exec_expr(expr).await?;
 
         Ok(match op.id() {
@@ -423,7 +319,7 @@ impl QueryEngine {
         })
     }
 
-    async fn call_expr(&mut self, func: &Function, args: &FunctionArgs) -> Result<Value> {
+    async fn call_expr(&self, func: &Function, args: &FunctionArgs) -> Result<Value> {
         use crate::functions::Func;
 
         let func_name = Func::from_str(func.name).map_err(|_| {
@@ -476,7 +372,7 @@ impl QueryEngine {
                         }
                     }
                 };
-                let sample_time = self.start + (self.interval * self.time_window_idx);
+                let sample_time = self.time;
                 functions::histogram_quantile(sample_time, phi, input)?
             }
             Func::HistogramSum => todo!(),
@@ -516,14 +412,6 @@ impl QueryEngine {
             ret.drop_metric_name(),
         )
     }
-}
-
-/// Converts `t` to the number of microseconds elapsed since the beginning of the Unix epoch.
-fn micros_since_epoch(t: SystemTime) -> i64 {
-    micros(
-        t.duration_since(UNIX_EPOCH)
-            .expect("BUG: {t} is earlier than Unix epoch"),
-    )
 }
 
 fn micros(t: Duration) -> i64 {

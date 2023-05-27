@@ -43,7 +43,7 @@ fn bench_promql(c: &mut Criterion) {
         };
         group.bench_function(BenchmarkId::from_parameter(format!("{alias}")), |b| {
             b.to_async(&rt).iter(|| async {
-                let mut engine = newpromql::QueryEngine::new(Arc::clone(&ctx));
+                let mut engine = newpromql::Query::new(Arc::clone(&ctx));
                 let data = engine.exec(black_box(eval_stmt.clone())).await.unwrap();
                 black_box(data);
             })

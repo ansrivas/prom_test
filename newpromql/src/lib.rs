@@ -1,7 +1,9 @@
-pub mod aggregations;
+mod aggregations;
 pub mod datafusion;
 mod engine;
-pub mod functions;
+mod exec;
+mod functions;
 pub mod value;
 
-pub use engine::QueryEngine;
+pub use engine::Engine;
+pub use exec::Query;

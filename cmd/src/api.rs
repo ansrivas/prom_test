@@ -129,17 +129,24 @@ pub async fn query(
         lookback_delta: Duration::from_secs(300),
     };
 
-    let mut engine = newpromql::QueryEngine::new(ctx);
+    let mut engine = newpromql::Query::new(ctx);
     let response = match engine.exec(eval_stmt).await {
-        Ok(data) => QueryResponse {
-            status: Status::Success,
-            data: Some(QueryResult {
-                result_type: data.get_type().to_string(),
-                result: data,
-            }),
-            error_type: None,
-            error: None,
-        },
+        Ok((data, result_type)) => {
+            let result_type = if result_type.is_some() {
+                result_type.unwrap()
+            } else {
+                data.get_type().to_string()
+            };
+            QueryResponse {
+                status: Status::Success,
+                data: Some(QueryResult {
+                    result_type,
+                    result: data,
+                }),
+                error_type: None,
+                error: None,
+            }
+        }
         Err(e) => QueryResponse {
             status: Status::Error,
             data: None,
